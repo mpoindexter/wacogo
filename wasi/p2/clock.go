@@ -3,8 +3,8 @@ package p2
 import (
 	"time"
 
-	"github.com/partite-ai/wacogo/model"
-	"github.com/partite-ai/wacogo/model/host"
+	"github.com/partite-ai/wacogo/componentmodel"
+	"github.com/partite-ai/wacogo/componentmodel/host"
 )
 
 type Instant uint64
@@ -20,7 +20,7 @@ func NewDateTime(seconds uint64, nanoseconds uint32) DateTime {
 	)
 }
 
-func (DateTime) ValueType(inst *host.Instance) model.ValueType {
+func (DateTime) ValueType(inst *host.Instance) componentmodel.ValueType {
 	return host.RecordType[DateTime](inst, NewDateTime)
 }
 
@@ -40,28 +40,28 @@ func CreateMonotonicClockInstance(
 	hi.AddTypeExport("duration", host.ValueTypeFor[Duration](hi))
 	hi.AddTypeExport("pollable", host.ResourceTypeFor[Pollable](hi, pollInstance))
 
-	hi.MustAddFunction("now", func() model.U64 {
-		return model.U64(time.Now().UnixNano())
+	hi.MustAddFunction("now", func() componentmodel.U64 {
+		return componentmodel.U64(time.Now().UnixNano())
 	})
-	hi.MustAddFunction("resolution", func() model.U64 {
-		return model.U64(1)
+	hi.MustAddFunction("resolution", func() componentmodel.U64 {
+		return componentmodel.U64(1)
 	})
-	hi.MustAddFunction("subscribe-instant", func(d model.U64) model.Own[Pollable] {
+	hi.MustAddFunction("subscribe-instant", func(d componentmodel.U64) componentmodel.Own[Pollable] {
 		target := time.Unix(0, int64(d))
 		delta := time.Until(target)
 		if delta <= 0 {
-			return model.Own[Pollable]{
+			return componentmodel.Own[Pollable]{
 				Resource: AlwaysReadyPollable{},
 			}
 		}
 
-		return model.Own[Pollable]{
+		return componentmodel.Own[Pollable]{
 			Resource: NewChanPollable(time.After(delta)),
 		}
 	})
 
-	hi.MustAddFunction("subscribe-duration", func(d model.U64) model.Own[Pollable] {
-		return model.Own[Pollable]{
+	hi.MustAddFunction("subscribe-duration", func(d componentmodel.U64) componentmodel.Own[Pollable] {
+		return componentmodel.Own[Pollable]{
 			Resource: NewChanPollable(time.After(time.Duration(d))),
 		}
 	})

@@ -3,7 +3,7 @@ package p2
 import (
 	"io"
 
-	"github.com/partite-ai/wacogo/model"
+	"github.com/partite-ai/wacogo/componentmodel"
 )
 
 func CreateStandardWASIInstances(
@@ -13,8 +13,8 @@ func CreateStandardWASIInstances(
 	args []string,
 	environment []*EnvVar,
 	initialCwd string,
-) (map[string]*model.Instance, error) {
-	instances := make(map[string]*model.Instance)
+) (map[string]*componentmodel.Instance, error) {
+	instances := make(map[string]*componentmodel.Instance)
 
 	cliInstance := CreateEnvironmentInstance(environment, args, initialCwd)
 	instances["wasi:cli/environment@0.2.0"] = cliInstance.Instance()

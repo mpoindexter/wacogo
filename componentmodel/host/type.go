@@ -6,60 +6,60 @@ import (
 	"io"
 	"reflect"
 
-	"github.com/partite-ai/wacogo/model"
+	"github.com/partite-ai/wacogo/componentmodel"
 )
 
 type ValueTyped interface {
-	ValueType(inst *Instance) model.ValueType
+	ValueType(inst *Instance) componentmodel.ValueType
 }
 
-func ValueTypeFor[T any](inst *Instance) model.ValueType {
+func ValueTypeFor[T any](inst *Instance) componentmodel.ValueType {
 	if vt, ok := valueTypeFor(inst, reflect.TypeFor[T]()); ok {
 		return vt
 	}
 	panic(fmt.Sprintf("ValueTypeFor: unsupported type %T", *new(T)))
 }
 
-func valueTypeFor(inst *Instance, t reflect.Type) (model.ValueType, bool) {
+func valueTypeFor(inst *Instance, t reflect.Type) (componentmodel.ValueType, bool) {
 	switch t.Kind() {
 	case reflect.Bool:
-		return &model.BoolType{}, true
+		return &componentmodel.BoolType{}, true
 	case reflect.Uint8:
-		return &model.U8Type{}, true
+		return &componentmodel.U8Type{}, true
 	case reflect.Uint16:
-		return &model.U16Type{}, true
+		return &componentmodel.U16Type{}, true
 	case reflect.Uint32:
-		return &model.U32Type{}, true
+		return &componentmodel.U32Type{}, true
 	case reflect.Uint64:
-		return &model.U64Type{}, true
+		return &componentmodel.U64Type{}, true
 	case reflect.Int8:
-		return &model.S8Type{}, true
+		return &componentmodel.S8Type{}, true
 	case reflect.Int16:
-		return &model.S16Type{}, true
+		return &componentmodel.S16Type{}, true
 	case reflect.Int32:
-		return &model.S32Type{}, true
+		return &componentmodel.S32Type{}, true
 	case reflect.Int64:
-		return &model.S64Type{}, true
+		return &componentmodel.S64Type{}, true
 	case reflect.Float32:
-		return &model.F32Type{}, true
+		return &componentmodel.F32Type{}, true
 	case reflect.Float64:
-		return &model.F64Type{}, true
+		return &componentmodel.F64Type{}, true
 	case reflect.String:
-		return &model.StringType{}, true
+		return &componentmodel.StringType{}, true
 	}
 
-	if t.AssignableTo(reflect.TypeFor[model.Char]()) {
-		return &model.CharType{}, true
+	if t.AssignableTo(reflect.TypeFor[componentmodel.Char]()) {
+		return &componentmodel.CharType{}, true
 	}
 
-	if t.AssignableTo(reflect.TypeFor[model.ByteArray]()) {
-		return &model.ByteArrayType{}, true
+	if t.AssignableTo(reflect.TypeFor[componentmodel.ByteArray]()) {
+		return &componentmodel.ByteArrayType{}, true
 	}
 
 	// Resource Handle
 	type handleType interface {
 		ResourceType() reflect.Type
-		HandleValueType(t *model.ResourceType) model.ValueType
+		HandleValueType(t *componentmodel.ResourceType) componentmodel.ValueType
 	}
 
 	if t.Implements(reflect.TypeFor[handleType]()) {
@@ -81,13 +81,13 @@ func valueTypeFor(inst *Instance, t reflect.Type) (model.ValueType, bool) {
 	// Enum type
 	if t.ConvertibleTo(reflect.TypeFor[string]()) && t.Implements(reflect.TypeFor[EnumValueProvider]()) {
 		enumValues := reflect.Zero(t).Interface().(EnumValueProvider).EnumValues()
-		return model.EnumType(enumValues...), true
+		return componentmodel.EnumType(enumValues...), true
 	}
 
 	// Flags type
 	if t.ConvertibleTo(reflect.TypeFor[map[string]bool]()) && t.Implements(reflect.TypeFor[FlagsValueProvider]()) {
 		flagsValues := reflect.Zero(t).Interface().(FlagsValueProvider).FlagsValues()
-		return &model.FlagsType{FlagNames: flagsValues}, true
+		return &componentmodel.FlagsType{FlagNames: flagsValues}, true
 	}
 
 	// Slice type
@@ -96,13 +96,13 @@ func valueTypeFor(inst *Instance, t reflect.Type) (model.ValueType, bool) {
 		if !ok {
 			return nil, false
 		}
-		return &model.ListType{ElementType: elemType}, true
+		return &componentmodel.ListType{ElementType: elemType}, true
 	}
 
 	return nil, false
 }
 
-func ResourceTypeFor[T any](inst *Instance, owner *Instance) *model.ResourceType {
+func ResourceTypeFor[T any](inst *Instance, owner *Instance) *componentmodel.ResourceType {
 	if rt, ok := resourceTypeFor[T](inst, owner); ok {
 		return rt
 	}
@@ -110,7 +110,7 @@ func ResourceTypeFor[T any](inst *Instance, owner *Instance) *model.ResourceType
 	panic(fmt.Sprintf("ResourceTypeFor: unsupported type %T", *new(T)))
 }
 
-func resourceTypeFor[T any](inst, owner *Instance) (*model.ResourceType, bool) {
+func resourceTypeFor[T any](inst, owner *Instance) (*componentmodel.ResourceType, bool) {
 	t := reflect.TypeFor[T]()
 
 	rt, ok := inst.resourceTypes[t]
@@ -135,7 +135,7 @@ func resourceTypeFor[T any](inst, owner *Instance) (*model.ResourceType, bool) {
 			res.(io.Closer).Close()
 		}
 	}
-	rt = model.NewResourceType(owner.instance, t, destructor)
+	rt = componentmodel.NewResourceType(owner.instance, t, destructor)
 	inst.resourceTypes[t] = rt
 	return rt, true
 }

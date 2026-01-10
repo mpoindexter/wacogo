@@ -3,40 +3,40 @@ package host
 import (
 	"reflect"
 
-	"github.com/partite-ai/wacogo/model"
+	"github.com/partite-ai/wacogo/componentmodel"
 )
 
 type Variant[T VariantImpl] struct {
-	value *model.Variant
+	value *componentmodel.Variant
 }
 
 type variantImpl struct {
-	value *model.Variant
+	value *componentmodel.Variant
 }
 
 func VariantType(
 	hi *Instance,
 	cases ...*VariantCaseDef,
-) *model.VariantType {
-	variantCases := make([]*model.VariantCase, len(cases))
+) *componentmodel.VariantType {
+	variantCases := make([]*componentmodel.VariantCase, len(cases))
 	for i, c := range cases {
-		variantCases[i] = &model.VariantCase{
+		variantCases[i] = &componentmodel.VariantCase{
 			Name: c.caseLabel,
 			Type: c.valueType(hi),
 		}
 	}
-	return &model.VariantType{
+	return &componentmodel.VariantType{
 		Cases: variantCases,
 	}
 }
 
 type VariantCaseDef struct {
 	caseLabel string
-	valueType func(hi *Instance) model.ValueType
+	valueType func(hi *Instance) componentmodel.ValueType
 }
 
 type VariantImpl interface {
-	~struct{ value *model.Variant }
+	~struct{ value *componentmodel.Variant }
 	ValueTyped
 }
 
@@ -46,11 +46,11 @@ func VariantCase[
 ](
 	constr C,
 ) *VariantCaseDef {
-	v := (struct{ value *model.Variant })(constr())
+	v := (struct{ value *componentmodel.Variant })(constr())
 	caseLabel := v.value.CaseLabel
 	return &VariantCaseDef{
 		caseLabel: caseLabel,
-		valueType: func(hi *Instance) model.ValueType {
+		valueType: func(hi *Instance) componentmodel.ValueType {
 			return nil
 		},
 	}
@@ -64,11 +64,11 @@ func VariantCaseValue[
 	constr C,
 ) *VariantCaseDef {
 	var empty T
-	v := (struct{ value *model.Variant })(constr(empty))
+	v := (struct{ value *componentmodel.Variant })(constr(empty))
 	caseLabel := v.value.CaseLabel
 	return &VariantCaseDef{
 		caseLabel: caseLabel,
-		valueType: func(hi *Instance) model.ValueType {
+		valueType: func(hi *Instance) componentmodel.ValueType {
 			return ValueTypeFor[T](hi)
 		},
 	}
@@ -83,7 +83,7 @@ func VariantConstructValue[
 ) V {
 	converter := converterFor(reflect.TypeFor[T]())
 	vx := Variant[V]{
-		value: &model.Variant{
+		value: &componentmodel.Variant{
 			CaseLabel: caseLabel,
 			Value:     converter.fromHost(value),
 		},
@@ -97,7 +97,7 @@ func VariantConstruct[
 	caseLabel string,
 ) V {
 	vx := Variant[V]{
-		value: &model.Variant{
+		value: &componentmodel.Variant{
 			CaseLabel: caseLabel,
 		},
 	}
@@ -111,7 +111,7 @@ func VariantCast[
 	v V,
 	caseLabel string,
 ) (T, bool) {
-	vv := (struct{ value *model.Variant })(v)
+	vv := (struct{ value *componentmodel.Variant })(v)
 
 	if vv.value.CaseLabel != caseLabel {
 		var zero T
@@ -128,6 +128,6 @@ func VariantTest[
 	v V,
 	caseLabel string,
 ) bool {
-	vv := (struct{ value *model.Variant })(v)
+	vv := (struct{ value *componentmodel.Variant })(v)
 	return vv.value.CaseLabel == caseLabel
 }

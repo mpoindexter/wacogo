@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/partite-ai/wacogo/model"
+	"github.com/partite-ai/wacogo/componentmodel"
 )
 
 type Record[R RecordImpl] struct {
@@ -12,8 +12,8 @@ type Record[R RecordImpl] struct {
 }
 
 type recordData struct {
-	record          model.Record
-	typeConstructor func(inst *Instance) (*model.RecordType, error)
+	record          componentmodel.Record
+	typeConstructor func(inst *Instance) (*componentmodel.RecordType, error)
 }
 
 type recordImpl struct {
@@ -32,7 +32,7 @@ func RecordType[
 ](
 	hi *Instance,
 	constr any,
-) *model.RecordType {
+) *componentmodel.RecordType {
 	rv := reflect.ValueOf(constr)
 	if rv.Kind() != reflect.Func {
 		panic("RecordType constructor must be a function")
@@ -62,8 +62,8 @@ func RecordType[
 
 type RecordFieldValue struct {
 	fieldName string
-	fieldType func(hi *Instance) model.ValueType
-	value     model.Value
+	fieldType func(hi *Instance) componentmodel.ValueType
+	value     componentmodel.Value
 	err       error
 }
 
@@ -79,7 +79,7 @@ func RecordField[
 	mv := converter.fromHost(value)
 	return &RecordFieldValue{
 		fieldName: name,
-		fieldType: func(hi *Instance) model.ValueType {
+		fieldType: func(hi *Instance) componentmodel.ValueType {
 			return ValueTypeFor[T](hi)
 		},
 		value: mv,
@@ -89,26 +89,26 @@ func RecordField[
 func RecordConstruct[
 	R RecordImpl,
 ](fields ...*RecordFieldValue) R {
-	fieldValues := make([]model.Value, len(fields))
+	fieldValues := make([]componentmodel.Value, len(fields))
 	for i, f := range fields {
 		fieldValues[i] = f.value
 	}
 
 	return R{
 		data: &recordData{
-			record: model.NewRecord(fieldValues...),
-			typeConstructor: func(inst *Instance) (*model.RecordType, error) {
-				t := make([]*model.RecordField, len(fields))
+			record: componentmodel.NewRecord(fieldValues...),
+			typeConstructor: func(inst *Instance) (*componentmodel.RecordType, error) {
+				t := make([]*componentmodel.RecordField, len(fields))
 				for i, f := range fields {
 					if f.err != nil {
 						return nil, f.err
 					}
-					t[i] = &model.RecordField{
+					t[i] = &componentmodel.RecordField{
 						Name: f.fieldName,
 						Type: f.fieldType(inst),
 					}
 				}
-				return &model.RecordType{
+				return &componentmodel.RecordType{
 					Fields: t,
 				}, nil
 			},

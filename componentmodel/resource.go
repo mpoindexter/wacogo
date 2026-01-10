@@ -1,4 +1,4 @@
-package model
+package componentmodel
 
 type resourceHandle[T any] struct {
 	typ      *ResourceType

@@ -3,8 +3,8 @@ package p2
 import (
 	"io"
 
-	"github.com/partite-ai/wacogo/model"
-	"github.com/partite-ai/wacogo/model/host"
+	"github.com/partite-ai/wacogo/componentmodel"
+	"github.com/partite-ai/wacogo/componentmodel/host"
 )
 
 type EnvVar struct {
@@ -19,17 +19,17 @@ func CreateEnvironmentInstance(
 ) *host.Instance {
 	hi := host.NewInstance()
 
-	hi.MustAddFunction("get-environment", func() []Tuple2[model.String, model.String] {
-		tuples := make([]Tuple2[model.String, model.String], len(vars))
+	hi.MustAddFunction("get-environment", func() []Tuple2[componentmodel.String, componentmodel.String] {
+		tuples := make([]Tuple2[componentmodel.String, componentmodel.String], len(vars))
 		for i, v := range vars {
-			tuples[i] = NewTuple2(model.String(v.Key), model.String(v.Value))
+			tuples[i] = NewTuple2(componentmodel.String(v.Key), componentmodel.String(v.Value))
 		}
 		return tuples
 	})
-	hi.MustAddFunction("get-arguments", func() []model.String {
-		modelArgs := make([]model.String, len(args))
+	hi.MustAddFunction("get-arguments", func() []componentmodel.String {
+		modelArgs := make([]componentmodel.String, len(args))
 		for i, arg := range args {
-			modelArgs[i] = model.String(arg)
+			modelArgs[i] = componentmodel.String(arg)
 		}
 		return modelArgs
 	})
@@ -49,8 +49,8 @@ func CreateStdoutInstance(
 	hi := host.NewInstance()
 
 	hi.AddTypeExport("output-stream", host.ResourceTypeFor[OutputStream](hi, streamsInstance))
-	hi.MustAddFunction("get-stdout", func() model.Own[OutputStream] {
-		return model.Own[OutputStream]{Resource: OutputStream{w: w}}
+	hi.MustAddFunction("get-stdout", func() componentmodel.Own[OutputStream] {
+		return componentmodel.Own[OutputStream]{Resource: OutputStream{w: w}}
 	})
 	return hi
 }
@@ -62,8 +62,8 @@ func CreateStderrInstance(
 	hi := host.NewInstance()
 	hi.AddTypeExport("output-stream", host.ResourceTypeFor[OutputStream](hi, streamsInstance))
 
-	hi.MustAddFunction("get-stderr", func() model.Own[OutputStream] {
-		return model.Own[OutputStream]{Resource: OutputStream{w: w}}
+	hi.MustAddFunction("get-stderr", func() componentmodel.Own[OutputStream] {
+		return componentmodel.Own[OutputStream]{Resource: OutputStream{w: w}}
 	})
 	return hi
 }
@@ -75,8 +75,8 @@ func CreateStdinInstance(
 	hi := host.NewInstance()
 	hi.AddTypeExport("input-stream", host.ResourceTypeFor[InputStream](hi, streamsInstance))
 
-	hi.MustAddFunction("get-stdin", func() model.Own[InputStream] {
-		return model.Own[InputStream]{Resource: InputStream{r: in}}
+	hi.MustAddFunction("get-stdin", func() componentmodel.Own[InputStream] {
+		return componentmodel.Own[InputStream]{Resource: InputStream{r: in}}
 	})
 
 	return hi

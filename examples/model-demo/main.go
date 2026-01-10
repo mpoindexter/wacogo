@@ -7,7 +7,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/partite-ai/wacogo/model"
+	"github.com/partite-ai/wacogo/componentmodel"
 	"github.com/partite-ai/wacogo/parser"
 	"github.com/partite-ai/wacogo/wasi/p2"
 	"github.com/tetratelabs/wazero"
@@ -40,7 +40,7 @@ func main() {
 	defer runtime.Close(ctx)
 
 	// Build the model
-	builder := model.NewBuilder(runtime)
+	builder := componentmodel.NewBuilder(runtime)
 	modelComp, err := builder.Build(ctx, comp)
 	if err != nil {
 		log.Fatalf("Failed to build model: %v", err)
@@ -75,12 +75,12 @@ func main() {
 		log.Fatalf("Export 'example:gocomponent/greet' not found")
 	}
 
-	greetFunc, ok := greetComp.(*model.Instance).Export("greet-all")
+	greetFunc, ok := greetComp.(*componentmodel.Instance).Export("greet-all")
 	if !ok {
 		log.Fatalf("Export 'greet-all' not found in greet component")
 	}
 
-	greetFuncTyped, ok := greetFunc.(*model.Function)
+	greetFuncTyped, ok := greetFunc.(*componentmodel.Function)
 	if !ok {
 		log.Fatalf("'greet-all' is not a function")
 	}

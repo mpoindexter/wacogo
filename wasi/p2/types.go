@@ -1,13 +1,13 @@
 package p2
 
 import (
-	"github.com/partite-ai/wacogo/model"
-	"github.com/partite-ai/wacogo/model/host"
+	"github.com/partite-ai/wacogo/componentmodel"
+	"github.com/partite-ai/wacogo/componentmodel/host"
 )
 
 type Option[T any] host.Variant[Option[T]]
 
-func (Option[T]) ValueType(inst *host.Instance) model.ValueType {
+func (Option[T]) ValueType(inst *host.Instance) componentmodel.ValueType {
 	return host.VariantType(
 		inst,
 		host.VariantCaseValue(OptionSome[T]),
@@ -38,13 +38,13 @@ func (v Option[T]) None() bool {
 
 type Void struct{}
 
-func (Void) ValueType(inst *host.Instance) model.ValueType {
+func (Void) ValueType(inst *host.Instance) componentmodel.ValueType {
 	return nil
 }
 
 type Result[O, E any] host.Variant[Result[O, E]]
 
-func (Result[O, E]) ValueType(inst *host.Instance) model.ValueType {
+func (Result[O, E]) ValueType(inst *host.Instance) componentmodel.ValueType {
 	return host.VariantType(
 		inst,
 		host.VariantCaseValue(ResultOk[O, E]),
@@ -76,7 +76,7 @@ func (v Result[O, E]) Err() (E, bool) {
 
 type Tuple2[A, B any] host.Record[Tuple2[A, B]]
 
-func (Tuple2[A, B]) ValueType(inst *host.Instance) model.ValueType {
+func (Tuple2[A, B]) ValueType(inst *host.Instance) componentmodel.ValueType {
 	return host.RecordType[Tuple2[A, B]](
 		inst,
 		NewTuple2[A, B],

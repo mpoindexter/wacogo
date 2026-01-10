@@ -5,29 +5,29 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/partite-ai/wacogo/model"
+	"github.com/partite-ai/wacogo/componentmodel"
 )
 
 type Instance struct {
 	exports       map[string]any
-	instance      *model.Instance
-	resourceTypes map[reflect.Type]*model.ResourceType
+	instance      *componentmodel.Instance
+	resourceTypes map[reflect.Type]*componentmodel.ResourceType
 }
 
 func NewInstance() *Instance {
 	exports := make(map[string]any)
 	return &Instance{
 		exports:       exports,
-		instance:      model.NewInstanceOf(exports),
-		resourceTypes: make(map[reflect.Type]*model.ResourceType),
+		instance:      componentmodel.NewInstanceOf(exports),
+		resourceTypes: make(map[reflect.Type]*componentmodel.ResourceType),
 	}
 }
 
-func (hi *Instance) Instance() *model.Instance {
+func (hi *Instance) Instance() *componentmodel.Instance {
 	return hi.instance
 }
 
-func (hi *Instance) AddTypeExport(name string, typ model.Type) {
+func (hi *Instance) AddTypeExport(name string, typ componentmodel.Type) {
 	hi.exports[name] = typ
 }
 
@@ -38,9 +38,9 @@ func (hi *Instance) AddFunction(name string, fn any) error {
 	}
 
 	var paramConverters []converter
-	var paramTypes []model.ValueType
+	var paramTypes []componentmodel.ValueType
 	var resultConverter converter
-	var resultType model.ValueType
+	var resultType componentmodel.ValueType
 
 	for i := 0; i < fnType.NumIn(); i++ {
 		paramType := fnType.In(i)
@@ -76,13 +76,13 @@ func (hi *Instance) AddFunction(name string, fn any) error {
 		return fmt.Errorf("functions with more than one return value are not supported")
 	}
 
-	modelFn := model.NewFunction(
+	modelFn := componentmodel.NewFunction(
 		hi.instance,
-		&model.FunctionType{
+		&componentmodel.FunctionType{
 			ParamTypes: paramTypes,
 			ResultType: resultType,
 		},
-		func(ctx context.Context, params []model.Value) model.Value {
+		func(ctx context.Context, params []componentmodel.Value) componentmodel.Value {
 			if len(params) != len(paramConverters) {
 				panic(fmt.Errorf("expected %d parameters, got %d", len(paramConverters), len(params)))
 			}
