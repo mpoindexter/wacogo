@@ -142,7 +142,7 @@ func (lc *listConverter) toHost(v componentmodel.Value) any {
 	srv := reflect.ValueOf(v)
 	length := srv.Len()
 	trv := reflect.MakeSlice(lc.typ, length, length)
-	for i := 0; i < length; i++ {
+	for i := range length {
 		elemValue := srv.Index(i)
 		hostElem := lc.elemConverter.toHost(elemValue.Interface().(componentmodel.Value))
 		trv.Index(i).Set(reflect.ValueOf(hostElem))
@@ -153,8 +153,8 @@ func (lc *listConverter) toHost(v componentmodel.Value) any {
 func (lc *listConverter) fromHost(v any) componentmodel.Value {
 	rv := reflect.ValueOf(v)
 	length := rv.Len()
-	srv := reflect.MakeSlice(lc.elemConverter.modelType(), length, length)
-	for i := 0; i < length; i++ {
+	srv := reflect.MakeSlice(reflect.TypeFor[componentmodel.List](), length, length)
+	for i := range length {
 		elemValue := rv.Index(i)
 		modelElem := lc.elemConverter.fromHost(elemValue.Interface())
 		srv.Index(i).Set(reflect.ValueOf(modelElem))

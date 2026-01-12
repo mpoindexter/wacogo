@@ -3,8 +3,6 @@ package componentmodel
 import (
 	"context"
 	"fmt"
-
-	"github.com/partite-ai/wacogo/ast"
 )
 
 type functionDefinition interface {
@@ -48,15 +46,6 @@ func (d *functionImportDefinition) resolveFunction(ctx context.Context, scope in
 	return fn, nil
 }
 
-type functionCanonLift struct {
-	lift *ast.CanonLift
-}
-
-func (d *functionCanonLift) resolveFunction(ctx context.Context, scope instanceScope) (*Function, error) {
-	// TODO: Implement canon lift
-	return nil, nil
-}
-
 // Function represents a component function
 type Function struct {
 	typ      *FunctionType
@@ -72,7 +61,12 @@ func NewFunction(
 	return &Function{
 		typ:      typ,
 		instance: instance,
+		invoke:   invoke,
 	}
+}
+
+func (f *Function) Invoke(ctx context.Context, params ...Value) Value {
+	return f.invoke(ctx, params)
 }
 
 type FunctionType struct {
@@ -100,29 +94,4 @@ func (ft *FunctionType) equalsType(other Type) bool {
 		return false
 	}
 	return ft.ResultType.equalsType(otherFt.ResultType)
-}
-
-func HostFunction(
-	fn any,
-	paramTypes []ValueType,
-	resultType ValueType,
-) (*Function, error) {
-	return &Function{
-		typ: &FunctionType{
-			ParamTypes: paramTypes,
-			ResultType: resultType,
-		},
-	}, nil
-}
-
-func MustHostFunction(
-	fn any,
-	paramTypes []ValueType,
-	resultType ValueType,
-) *Function {
-	f, err := HostFunction(fn, paramTypes, resultType)
-	if err != nil {
-		panic(err)
-	}
-	return f
 }

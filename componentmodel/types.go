@@ -250,11 +250,11 @@ func (d *variantTypeDefinition) resolveType(ctx context.Context, scope instanceS
 			if err != nil {
 				return nil, fmt.Errorf("failed to resolve variant case type: %w", err)
 			}
-			caseValueType, ok := caseType.(ValueType)
+			cvt, ok := caseType.(ValueType)
 			if !ok {
 				return nil, fmt.Errorf("variant case type is not a value type: %T", caseType)
 			}
-			caseType = caseValueType
+			caseValueType = cvt
 		}
 		cases[i] = &VariantCase{
 			Name: d.labels[i],

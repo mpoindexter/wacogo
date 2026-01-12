@@ -75,14 +75,33 @@ func main() {
 		log.Fatalf("Export 'example:gocomponent/greet' not found")
 	}
 
-	greetFunc, ok := greetComp.(*componentmodel.Instance).Export("greet-all")
+	greetAllFunc, ok := greetComp.(*componentmodel.Instance).Export("greet-all")
 	if !ok {
 		log.Fatalf("Export 'greet-all' not found in greet component")
 	}
 
-	greetFuncTyped, ok := greetFunc.(*componentmodel.Function)
+	greetAllFuncTyped, ok := greetAllFunc.(*componentmodel.Function)
 	if !ok {
 		log.Fatalf("'greet-all' is not a function")
 	}
+	fmt.Println(greetAllFuncTyped)
+	result := greetAllFuncTyped.Invoke(ctx, componentmodel.List{
+		componentmodel.String("Alice"),
+		componentmodel.String("Bob"),
+		componentmodel.String("Charlie"),
+	})
+	fmt.Println("greet-all result:", result)
+
+	greetFunc, ok := greetComp.(*componentmodel.Instance).Export("greeting")
+	if !ok {
+		log.Fatalf("Export 'greet' not found in greet component")
+	}
+
+	greetFuncTyped, ok := greetFunc.(*componentmodel.Function)
+	if !ok {
+		log.Fatalf("'greet' is not a function")
+	}
 	fmt.Println(greetFuncTyped)
+	result = greetFuncTyped.Invoke(ctx, componentmodel.String("Diana"))
+	fmt.Println("greet result:", result)
 }

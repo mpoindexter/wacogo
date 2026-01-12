@@ -77,15 +77,17 @@ func (b *Builder) buildDefinition(ctx context.Context, comp *Component, astDef a
 
 func (b *Builder) buildCoreModule(ctx context.Context, comp *Component, astMod *ast.CoreModule) error {
 	// Compile the module using wazero
-	fixed, err := wasm.TransformBlankImportNames(astMod.Raw)
-	if err != nil {
-		return fmt.Errorf("failed to transform blank import names: %w", err)
-	}
-	tableTypes, err := wasm.ReadTableExports(fixed)
+	/*
+		fixed, err := wasm.TransformBlankImportNames(astMod.Raw)
+		if err != nil {
+			return fmt.Errorf("failed to transform blank import names: %w", err)
+		}
+	*/
+	tableTypes, err := wasm.ReadTableExports(astMod.Raw)
 	if err != nil {
 		return fmt.Errorf("failed to read table exports: %w", err)
 	}
-	compiled, err := b.runtime.CompileModule(ctx, fixed)
+	compiled, err := b.runtime.CompileModule(ctx, astMod.Raw)
 	if err != nil {
 		return fmt.Errorf("failed to compile core module: %w", err)
 	}
@@ -374,7 +376,11 @@ func (b *Builder) buildExport(comp *Component, astExport *ast.Export) error {
 func (b *Builder) buildCanon(comp *Component, astCanon *ast.Canon) error {
 	switch def := astCanon.Def.(type) {
 	case *ast.CanonLift:
-		comp.scope.functions = append(comp.scope.functions, &functionCanonLift{lift: def})
+		fnDef, err := canonLift(comp, def)
+		if err != nil {
+			return err
+		}
+		comp.scope.functions = append(comp.scope.functions, fnDef)
 		return nil
 	case *ast.CanonLower:
 		fnDef, err := canonLower(comp, def)

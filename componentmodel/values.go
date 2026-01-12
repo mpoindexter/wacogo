@@ -623,7 +623,11 @@ func (t StringType) writeString(ctx *LiftLoadContext, str String) (uint32, uint3
 	switch ctx.stringEncoding {
 	case stringEncodingUTF8:
 		bytes := []byte(str)
-		ptr := ctx.realloc(0, 0, uint32(t.alignment()), uint32(len(bytes)))
+		ptr := ctx.realloc(0, 0, 1, uint32(len(bytes)))
+		ok := ctx.memory.Write(ptr, bytes)
+		if !ok {
+			return 0, 0, fmt.Errorf("failed to write string bytes at ptr %d with length %d", ptr, len(bytes))
+		}
 		return ptr, uint32(len(bytes)), nil
 	case stringEncodingUTF16, stringEncodingLatin1UTF16:
 		encoder := unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM).NewEncoder()
@@ -631,7 +635,11 @@ func (t StringType) writeString(ctx *LiftLoadContext, str String) (uint32, uint3
 		if err != nil {
 			return 0, 0, fmt.Errorf("failed to encode utf16 string: %w", err)
 		}
-		ptr := ctx.realloc(0, 0, uint32(t.alignment()), uint32(len(encoded)))
+		ptr := ctx.realloc(0, 0, 2, uint32(len(encoded)))
+		ok := ctx.memory.Write(ptr, encoded)
+		if !ok {
+			return 0, 0, fmt.Errorf("failed to write string bytes at ptr %d with length %d", ptr, len(encoded))
+		}
 		return ptr, uint32(len(encoded) / 2), nil
 	default:
 		return 0, 0, fmt.Errorf("unsupported string encoding: %d", ctx.stringEncoding)
@@ -865,6 +873,9 @@ func (t *VariantType) discriminantSize() int {
 func (t *VariantType) maxCaseAligment() int {
 	align := 1
 	for _, c := range t.Cases {
+		if c.Type == nil {
+			continue
+		}
 		a := c.Type.alignment()
 		if a > align {
 			align = a
@@ -1118,13 +1129,13 @@ func (t *ListType) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
 func (t *ListType) storeListValues(ctx *LiftLoadContext, val Value) (uint32, int, error) {
 	listVal := val.(List)
 	ptr := ctx.realloc(0, 0, uint32(t.alignment()), uint32(len(listVal))*uint32(t.ElementType.elementSize()))
-	ptr = uint32(alignTo(int(ptr), t.ElementType.alignment()))
-	for i := 0; i < len(listVal); i++ {
-		err := t.ElementType.store(ctx, ptr, listVal[i])
+	writeTo := uint32(alignTo(int(ptr), t.ElementType.alignment()))
+	for i := range listVal {
+		err := t.ElementType.store(ctx, writeTo, listVal[i])
 		if err != nil {
 			return 0, 0, fmt.Errorf("failed to store list element %d: %w", i, err)
 		}
-		ptr += uint32(t.ElementType.elementSize())
+		writeTo += uint32(t.ElementType.elementSize())
 	}
 	return ptr, len(listVal), nil
 }
