@@ -55,7 +55,7 @@ type Result[O, E any] host.Variant[Result[O, E]]
 func (Result[O, E]) ValueType(inst *host.Instance) componentmodel.ValueType {
 	return host.VariantType(
 		inst,
-		host.VariantCaseValue(ResultOk[O, E]),
+		host.VariantCaseValue(ResultOk[E, O]),
 		host.VariantCaseValue(ResultErr[O, E]),
 	)
 }

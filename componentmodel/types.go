@@ -6,6 +6,7 @@ import (
 	"maps"
 
 	"github.com/partite-ai/wacogo/ast"
+	"github.com/tetratelabs/wazero/api"
 )
 
 type componentModelTypeDefinition interface {
@@ -273,17 +274,18 @@ type resourceTypeDefinition struct {
 func (d *resourceTypeDefinition) resolveType(ctx context.Context, scope instanceScope) (Type, error) {
 	instance := scope.currentInstance()
 
-	var dtor *Function
+	var dtor api.Function
 	if d.destructorFnIndex != nil {
-		fnDef, err := scope.resolveFunctionDefinition(0, *d.destructorFnIndex)
+		coreFnDef, err := scope.resolveCoreFunctionDefinition(0, *d.destructorFnIndex)
 		if err != nil {
 			return nil, err
 		}
 
-		fn, err := fnDef.resolveFunction(ctx, scope)
+		mod, name, _, err := coreFnDef.resolveCoreFunction(ctx, scope)
 		if err != nil {
 			return nil, err
 		}
+		fn := mod.ExportedFunction(name)
 		dtor = fn
 	}
 
@@ -291,7 +293,7 @@ func (d *resourceTypeDefinition) resolveType(ctx context.Context, scope instance
 		instance: instance,
 		destructor: func(ctx context.Context, res any) {
 			if dtor != nil {
-				dtor.invoke(ctx, []Value{U32(res.(U32))})
+				dtor.Call(ctx, uint64(res.(uint32)))
 			}
 		},
 	}, nil

@@ -390,8 +390,12 @@ func (b *Builder) buildCanon(comp *Component, astCanon *ast.Canon) error {
 		comp.scope.coreFunctions = append(comp.scope.coreFunctions, fnDef)
 		return nil
 	case *ast.CanonResourceNew:
-		// TODO: implement resource new
-		return fmt.Errorf("resource new not yet supported")
+		fnDef, err := canonResourceNew(comp, def)
+		if err != nil {
+			return err
+		}
+		comp.scope.coreFunctions = append(comp.scope.coreFunctions, fnDef)
+		return nil
 	case *ast.CanonResourceDrop:
 		fnDef, err := canonResourceDrop(comp, def)
 		if err != nil {
@@ -400,8 +404,12 @@ func (b *Builder) buildCanon(comp *Component, astCanon *ast.Canon) error {
 		comp.scope.coreFunctions = append(comp.scope.coreFunctions, fnDef)
 		return nil
 	case *ast.CanonResourceRep:
-		// TODO: implement resource rep
-		return fmt.Errorf("resource rep not yet supported")
+		fnDef, err := canonResourceRep(comp, def)
+		if err != nil {
+			return err
+		}
+		comp.scope.coreFunctions = append(comp.scope.coreFunctions, fnDef)
+		return nil
 	default:
 		return fmt.Errorf("unsupported canon def: %T", def)
 	}

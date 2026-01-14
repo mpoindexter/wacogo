@@ -152,6 +152,58 @@ func (d *coreFunctionLoweredDefinition) resolveCoreFunction(ctx context.Context,
 	return modInst, "stub_function", mod.ExportedFunctions()["stub_function"], nil
 }
 
+func canonResourceNew(comp *Component, astDef *ast.CanonResourceNew) (coreFunctionDefinition, error) {
+	id := fmt.Sprintf("canon_resource_new_%s_fn_%d", comp.id, len(comp.scope.coreFunctions))
+	return &coreFunctionResourceNewDefinition{
+		id:     id,
+		astDef: astDef,
+	}, nil
+}
+
+type coreFunctionResourceNewDefinition struct {
+	id     string
+	astDef *ast.CanonResourceNew
+}
+
+func (d *coreFunctionResourceNewDefinition) resolveCoreFunction(ctx context.Context, scope instanceScope) (api.Module, string, api.FunctionDefinition, error) {
+	typeDef, err := scope.resolveComponentModelTypeDefinition(0, d.astDef.TypeIdx)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon drop: %w", err)
+	}
+	resourceTypeGeneric, err := typeDef.resolveType(ctx, scope)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon drop: %w", err)
+	}
+	resourceType, ok := resourceTypeGeneric.(*ResourceType)
+	if !ok {
+		return nil, "", nil, fmt.Errorf("canon drop type is not a resource")
+	}
+	mod, err := scope.runtime().NewHostModuleBuilder(d.id).NewFunctionBuilder().
+		WithGoModuleFunction(
+			api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
+				rep := uint32(stack[0])
+				instance := scope.currentInstance()
+				handle := NewResourceHandle(instance, resourceType, rep)
+				handleIdx := instance.loweredHandles.add(handle)
+				stack[0] = uint64(handleIdx)
+			}),
+			[]api.ValueType{api.ValueTypeI32},
+			[]api.ValueType{api.ValueTypeI32},
+		).
+		Export("stub_function").
+		Compile(ctx)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("failed to create resource new stub module: %w", err)
+	}
+
+	modInst, err := scope.runtime().InstantiateModule(ctx, mod, wazero.NewModuleConfig())
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("failed to instantiate resource new stub module: %w", err)
+	}
+
+	return modInst, "stub_function", mod.ExportedFunctions()["stub_function"], nil
+}
+
 func canonResourceDrop(comp *Component, astDef *ast.CanonResourceDrop) (coreFunctionDefinition, error) {
 	id := fmt.Sprintf("canon_resource_drop_%s_fn_%d", comp.id, len(comp.scope.coreFunctions))
 	return &coreFunctionResourceDropDefinition{
@@ -198,12 +250,71 @@ func (d *coreFunctionResourceDropDefinition) resolveCoreFunction(ctx context.Con
 		Export("stub_function").
 		Compile(ctx)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to create canon lower stub module: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to create resource drop stub module: %w", err)
 	}
 
 	modInst, err := scope.runtime().InstantiateModule(ctx, mod, wazero.NewModuleConfig())
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to instantiate canon lower stub module: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to instantiate resource drop stub module: %w", err)
+	}
+
+	return modInst, "stub_function", mod.ExportedFunctions()["stub_function"], nil
+}
+
+func canonResourceRep(comp *Component, astDef *ast.CanonResourceRep) (coreFunctionDefinition, error) {
+	id := fmt.Sprintf("canon_resource_rep_%s_fn_%d", comp.id, len(comp.scope.coreFunctions))
+	return &coreFunctionResourceRepDefinition{
+		id:     id,
+		astDef: astDef,
+	}, nil
+}
+
+type coreFunctionResourceRepDefinition struct {
+	id     string
+	astDef *ast.CanonResourceRep
+}
+
+func (d *coreFunctionResourceRepDefinition) resolveCoreFunction(ctx context.Context, scope instanceScope) (api.Module, string, api.FunctionDefinition, error) {
+	typeDef, err := scope.resolveComponentModelTypeDefinition(0, d.astDef.TypeIdx)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon drop: %w", err)
+	}
+	resourceTypeGeneric, err := typeDef.resolveType(ctx, scope)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon drop: %w", err)
+	}
+	resourceType, ok := resourceTypeGeneric.(*ResourceType)
+	if !ok {
+		return nil, "", nil, fmt.Errorf("canon drop type is not a resource")
+	}
+	mod, err := scope.runtime().NewHostModuleBuilder(d.id).NewFunctionBuilder().
+		WithGoModuleFunction(
+			api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
+				instance := scope.currentInstance()
+				resourceIdx := uint32(stack[0])
+				handle := instance.loweredHandles.get(uint32(resourceIdx))
+				if handle.resourceType() != resourceType {
+					panic(fmt.Errorf("resource type mismatch in canon drop"))
+				}
+				rep := handle.Resource()
+				if u32, ok := rep.(uint32); ok {
+					stack[0] = uint64(u32)
+				} else {
+					panic(fmt.Errorf("resource representation is not uint32"))
+				}
+			}),
+			[]api.ValueType{api.ValueTypeI32},
+			[]api.ValueType{api.ValueTypeI32},
+		).
+		Export("stub_function").
+		Compile(ctx)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("failed to create resource drop stub module: %w", err)
+	}
+
+	modInst, err := scope.runtime().InstantiateModule(ctx, mod, wazero.NewModuleConfig())
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("failed to instantiate resource drop stub module: %w", err)
 	}
 
 	return modInst, "stub_function", mod.ExportedFunctions()["stub_function"], nil

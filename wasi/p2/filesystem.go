@@ -315,8 +315,8 @@ func CreateFilesystemTypesInstance(
 		return ResultErr[componentmodel.U64](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.read-directory", func(self host.Borrow[*Descriptor]) Result[DirectoryEntryStream, ErrorCode] {
-		return ResultErr[DirectoryEntryStream](ErrorCode("unsupported"))
+	hi.AddFunction("[method]descriptor.read-directory", func(self host.Borrow[*Descriptor]) Result[host.Own[*DirectoryEntryStream], ErrorCode] {
+		return ResultErr[host.Own[*DirectoryEntryStream]](ErrorCode("unsupported"))
 	})
 
 	hi.AddFunction("[method]descriptor.sync", func(self host.Borrow[*Descriptor]) Result[Void, ErrorCode] {

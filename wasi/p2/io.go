@@ -54,12 +54,7 @@ type OutputStream struct {
 func (OutputStream) Resource() {}
 
 func (s OutputStream) write(contents componentmodel.ByteArray) Result[Void, StreamError] {
-	data := make([]byte, len(contents))
-	for i := range contents {
-		data[i] = byte(contents[i])
-	}
-
-	_, err := s.w.Write(data)
+	_, err := s.w.Write([]byte(contents))
 	if err != nil {
 		return ResultErr[Void](
 			StreamErrorLastOperationFailed(

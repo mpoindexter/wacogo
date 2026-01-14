@@ -1385,18 +1385,20 @@ func (p *Parser) parseTypeConstructor() (ast.DefType, error) {
 		return &ast.ListType{Element: elemType}, nil
 
 	case 0x67:
-		// fixed-length list type 🔧
-		elemType, err := p.parseValType()
-		if err != nil {
-			return nil, err
-		}
-		_, err = p.readU32() // length
-		if err != nil {
-			return nil, err
-		}
-		// For now, treat as regular list - TODO: extend AST to support fixed-length lists
-		return &ast.ListType{Element: elemType}, nil
-
+		return nil, fmt.Errorf("fixed length list type (0x67) is not yet supported")
+		/*
+			// fixed-length list type 🔧
+			elemType, err := p.parseValType()
+			if err != nil {
+				return nil, err
+			}
+			_, err = p.readU32() // length
+			if err != nil {
+				return nil, err
+			}
+			// For now, treat as regular list - TODO: extend AST to support fixed-length lists
+			return &ast.ListType{Element: elemType}, nil
+		*/
 	case 0x6f:
 		// tuple type
 		var types []ast.DefValType
@@ -1714,7 +1716,7 @@ func (p *Parser) parseComponentDecl() (ast.ComponentDecl, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &ast.CoreTypeDecl{Type: &ast.CoreType{DefType: typ.DefType.(ast.CoreDefType)}}, nil
+		return &ast.CoreTypeDecl{Type: &ast.CoreType{DefType: typ.DefType}}, nil
 
 	case 0x01:
 		// type
@@ -1780,7 +1782,7 @@ func (p *Parser) parseInstanceDecl() (ast.InstanceDecl, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &ast.CoreTypeDecl{Type: &ast.CoreType{DefType: typ.DefType.(ast.CoreDefType)}}, nil
+		return &ast.CoreTypeDecl{Type: &ast.CoreType{DefType: typ.DefType}}, nil
 
 	case 0x01:
 		// type
