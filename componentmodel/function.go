@@ -48,24 +48,21 @@ func (d *functionImportDefinition) resolveFunction(ctx context.Context, scope in
 
 // Function represents a component function
 type Function struct {
-	typ      *FunctionType
-	instance *Instance
-	invoke   func(ctx context.Context, params []Value) Value
+	typ    *FunctionType
+	invoke func(ctx context.Context, params []Value) (Value, error)
 }
 
 func NewFunction(
-	instance *Instance,
 	typ *FunctionType,
-	invoke func(ctx context.Context, params []Value) Value,
+	invoke func(ctx context.Context, params []Value) (Value, error),
 ) *Function {
 	return &Function{
-		typ:      typ,
-		instance: instance,
-		invoke:   invoke,
+		typ:    typ,
+		invoke: invoke,
 	}
 }
 
-func (f *Function) Invoke(ctx context.Context, params ...Value) Value {
+func (f *Function) Invoke(ctx context.Context, params ...Value) (Value, error) {
 	return f.invoke(ctx, params)
 }
 

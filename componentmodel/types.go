@@ -291,7 +291,7 @@ func (d *resourceTypeDefinition) resolveType(ctx context.Context, scope instance
 		instance: instance,
 		destructor: func(ctx context.Context, res any) {
 			if dtor != nil {
-				dtor.invoke(ctx, []Value{U32(res.(ExternalResourceRep))})
+				dtor.invoke(ctx, []Value{U32(res.(U32))})
 			}
 		},
 	}, nil
@@ -310,7 +310,7 @@ func (d *ownTypeDefinition) resolveType(ctx context.Context, scope instanceScope
 	if !ok {
 		return nil, fmt.Errorf("own resource type is not a resource type: %T", resType)
 	}
-	return OwnType[ExternalResourceRep]{
+	return OwnType{
 		ResourceType: resValueType,
 	}, nil
 }
@@ -328,7 +328,7 @@ func (d *borrowTypeDefinition) resolveType(ctx context.Context, scope instanceSc
 	if !ok {
 		return nil, fmt.Errorf("borrow resource type is not a resource type: %T", resType)
 	}
-	return BorrowType[ExternalResourceRep]{
+	return BorrowType{
 		ResourceType: resValueType,
 	}, nil
 }

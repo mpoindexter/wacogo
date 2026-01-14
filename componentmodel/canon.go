@@ -15,21 +15,12 @@ const (
 )
 
 type LiftLoadContext struct {
+	ctx            context.Context
 	instance       *Instance
 	memory         api.Memory
 	stringEncoding stringEncoding
 	realloc        func(originalPtr, originalSize, alignment, newSize uint32) uint32
-	cleanups       []func(ctx context.Context)
-}
-
-func (llc *LiftLoadContext) addCleanup(fn func(ctx context.Context)) {
-	llc.cleanups = append(llc.cleanups, fn)
-}
-
-func (llc *LiftLoadContext) cleanup(ctx context.Context) {
-	for _, fn := range llc.cleanups {
-		fn(ctx)
-	}
+	postreturn     api.Function
 }
 
 type stringEncoding int
@@ -94,7 +85,6 @@ func (d *coreFunctionLoweredDefinition) resolveCoreFunction(ctx context.Context,
 				if err != nil {
 					panic(fmt.Errorf("failed to create lift/load context for canon lower: %w", err))
 				}
-				defer llc.cleanup(ctx)
 
 				remainingParams := stack
 				itr := func() uint64 {
@@ -115,7 +105,6 @@ func (d *coreFunctionLoweredDefinition) resolveCoreFunction(ctx context.Context,
 						paramValues = append(paramValues, val)
 					}
 				} else {
-					// Too many parameters to pass flatly - pass a pointer to a memory block instead
 					offset := uint32(itr())
 					tt := TupleType(fn.typ.ParamTypes...)
 					tup, err := tt.load(llc, offset)
@@ -125,7 +114,10 @@ func (d *coreFunctionLoweredDefinition) resolveCoreFunction(ctx context.Context,
 					paramValues = tup.(*Record).fields
 				}
 
-				result := fn.invoke(ctx, paramValues)
+				result, err := fn.invoke(ctx, paramValues)
+				if err != nil {
+					panic(fmt.Errorf("failed to call core function for canon lower: %w", err))
+				}
 
 				if fn.typ.ResultType != nil {
 					if returnFlat {
@@ -135,7 +127,6 @@ func (d *coreFunctionLoweredDefinition) resolveCoreFunction(ctx context.Context,
 						}
 						copy(stack, flatResults)
 					} else {
-						// Too many results to return flatly - write to a memory block instead
 						offset := uint32(itr())
 						err := fn.typ.ResultType.store(llc, offset, result)
 						if err != nil {
@@ -143,9 +134,6 @@ func (d *coreFunctionLoweredDefinition) resolveCoreFunction(ctx context.Context,
 						}
 					}
 				}
-
-				// TODO: Handle post return options
-
 			}),
 			flatParamTypes,
 			flatResultTypes,
@@ -178,10 +166,31 @@ type coreFunctionResourceDropDefinition struct {
 }
 
 func (d *coreFunctionResourceDropDefinition) resolveCoreFunction(ctx context.Context, scope instanceScope) (api.Module, string, api.FunctionDefinition, error) {
+	typeDef, err := scope.resolveComponentModelTypeDefinition(0, d.astDef.TypeIdx)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon drop: %w", err)
+	}
+	resourceTypeGeneric, err := typeDef.resolveType(ctx, scope)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon drop: %w", err)
+	}
+	resourceType, ok := resourceTypeGeneric.(*ResourceType)
+	if !ok {
+		return nil, "", nil, fmt.Errorf("canon drop type is not a resource")
+	}
 	mod, err := scope.runtime().NewHostModuleBuilder(d.id).NewFunctionBuilder().
 		WithGoModuleFunction(
 			api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
-				// tODO
+				instance := scope.currentInstance()
+				resourceIdx := uint32(stack[0])
+				handle := instance.loweredHandles.remove(uint32(resourceIdx))
+				if handle.resourceType() != resourceType {
+					panic(fmt.Errorf("resource type mismatch in canon drop"))
+				}
+				if handle.isBorrowed() {
+					panic(fmt.Errorf("cannot drop resource with outstanding lends"))
+				}
+				handle.Drop()
 			}),
 			[]api.ValueType{api.ValueTypeI32},
 			[]api.ValueType{},
@@ -260,63 +269,81 @@ func (d *functionLiftedDefinition) resolveFunction(ctx context.Context, scope in
 	}
 
 	return NewFunction(
-		scope.currentInstance(),
 		fnType,
-		func(ctx context.Context, params []Value) Value {
-			llc, err := newLiftLoadContext(ctx, d.astDef.Options, scope)
-			if err != nil {
-				panic(fmt.Errorf("failed to create lift/load context for canon lower: %w", err))
+		func(ctx context.Context, params []Value) (Value, error) {
+			inst := scope.currentInstance()
+			if err := inst.enter(ctx); err != nil {
+				return nil, err
 			}
-			defer llc.cleanup(ctx)
 
-			var flatParams []uint64
-			if paramsFlat {
-				for i, pType := range fnType.ParamTypes {
-					flatVals, err := pType.lowerFlat(llc, params[i])
-					if err != nil {
-						panic(fmt.Errorf("failed to lower parameter %d for canon lift: %w", i, err))
-					}
-					flatParams = append(flatParams, flatVals...)
-				}
-			} else {
-				tt := TupleType(fnType.ParamTypes...)
-				offset := llc.realloc(0, 0, uint32(tt.alignment()), uint32(tt.elementSize()))
-				err := tt.store(llc, offset, &Record{fields: params})
+			result, err := func() (Value, error) {
+				llc, err := newLiftLoadContext(ctx, d.astDef.Options, scope)
 				if err != nil {
-					panic(fmt.Errorf("failed to load parameters for canon lower: %w", err))
+					return nil, fmt.Errorf("failed to create lift/load context for canon lower: %w", err)
 				}
-				flatParams = []uint64{uint64(offset)}
-			}
 
-			results, err := coreFn.Call(ctx, flatParams...)
-			if err != nil {
-				panic(fmt.Errorf("failed to call core function for canon lift: %w", err))
-			}
-
-			// TODO: Handle post return options
-
-			if fnType.ResultType != nil {
-				if returnFlat {
-					val, err := fnType.ResultType.liftFlat(llc, func() uint64 {
-						val := results[0]
-						results = results[1:]
-						return val
-					})
-					if err != nil {
-						panic(fmt.Errorf("failed to lift result for canon lift: %w", err))
+				var flatParams []uint64
+				if paramsFlat {
+					for i, pType := range fnType.ParamTypes {
+						flatVals, err := pType.lowerFlat(llc, params[i])
+						if err != nil {
+							return nil, fmt.Errorf("failed to lower parameter %d for canon lift: %w", i, err)
+						}
+						flatParams = append(flatParams, flatVals...)
 					}
-					return val
 				} else {
-					// Too many results to return flatly - read from a memory block instead
-					offset := uint32(results[0])
-					val, err := fnType.ResultType.load(llc, offset)
+					tt := TupleType(fnType.ParamTypes...)
+					offset := llc.realloc(0, 0, uint32(tt.alignment()), uint32(tt.elementSize()))
+					err := tt.store(llc, offset, &Record{fields: params})
 					if err != nil {
-						panic(fmt.Errorf("failed to load result for canon lift: %w", err))
+						return nil, fmt.Errorf("failed to load parameters for canon lower: %w", err)
 					}
-					return val
+					flatParams = []uint64{uint64(offset)}
 				}
+
+				results, err := coreFn.Call(ctx, flatParams...)
+				if err != nil {
+					return nil, fmt.Errorf("failed to call core function for canon lift: %w", err)
+				}
+
+				var returnValue Value
+
+				if fnType.ResultType != nil {
+					if returnFlat {
+						val, err := fnType.ResultType.liftFlat(llc, func() uint64 {
+							val := results[0]
+							results = results[1:]
+							return val
+						})
+						if err != nil {
+							return nil, fmt.Errorf("failed to lift result for canon lift: %w", err)
+						}
+						returnValue = val
+					} else {
+						// Too many results to return flatly - read from a memory block instead
+						offset := uint32(results[0])
+						val, err := fnType.ResultType.load(llc, offset)
+						if err != nil {
+							return nil, fmt.Errorf("failed to load result for canon lift: %w", err)
+						}
+						returnValue = val
+					}
+				}
+
+				if llc.postreturn != nil {
+					_, err := llc.postreturn.Call(ctx, results...)
+					if err != nil {
+						return nil, fmt.Errorf("failed to call post return function for canon lift: %w", err)
+					}
+				}
+				return returnValue, nil
+			}()
+
+			exitErr := inst.exit()
+			if err != nil {
+				return nil, err
 			}
-			return nil
+			return result, exitErr
 		},
 	), nil
 }
@@ -324,6 +351,7 @@ func (d *functionLiftedDefinition) resolveFunction(ctx context.Context, scope in
 func newLiftLoadContext(ctx context.Context, opts []ast.CanonOpt, scope instanceScope) (*LiftLoadContext, error) {
 	llc := &LiftLoadContext{
 		instance: scope.currentInstance(),
+		ctx:      ctx,
 	}
 
 	for _, opt := range opts {
@@ -366,7 +394,16 @@ func newLiftLoadContext(ctx context.Context, opts []ast.CanonOpt, scope instance
 				return uint32(results[0])
 			}
 		case *ast.PostReturnOpt:
-			// TODO: Implement post return handling
+			coreFnDef, err := scope.resolveCoreFunctionDefinition(0, o.FuncIdx)
+			if err != nil {
+				return nil, err
+			}
+			mod, fnName, _, err := coreFnDef.resolveCoreFunction(ctx, scope)
+			if err != nil {
+				return nil, err
+			}
+			postReturnFn := mod.ExportedFunction(fnName)
+			llc.postreturn = postReturnFn
 		default:
 			return nil, fmt.Errorf("unknown canon lift/load option: %T", opt)
 		}

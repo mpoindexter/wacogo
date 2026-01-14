@@ -271,119 +271,119 @@ func CreateFilesystemTypesInstance(
 		})
 	*/
 
-	hi.AddFunction("[method]descriptor.read-via-stream", func(self componentmodel.Borrow[*Descriptor], offset Filesize) Result[componentmodel.Own[InputStream], ErrorCode] {
-		return ResultErr[componentmodel.Own[InputStream]](ErrorCode("unsupported"))
+	hi.AddFunction("[method]descriptor.read-via-stream", func(self host.Borrow[*Descriptor], offset Filesize) Result[host.Own[InputStream], ErrorCode] {
+		return ResultErr[host.Own[InputStream]](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.write-via-stream", func(self componentmodel.Borrow[*Descriptor], offset Filesize) Result[componentmodel.Own[OutputStream], ErrorCode] {
-		return ResultErr[componentmodel.Own[OutputStream]](ErrorCode("unsupported"))
+	hi.AddFunction("[method]descriptor.write-via-stream", func(self host.Borrow[*Descriptor], offset Filesize) Result[host.Own[OutputStream], ErrorCode] {
+		return ResultErr[host.Own[OutputStream]](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.append-via-stream", func(self componentmodel.Borrow[*Descriptor]) Result[componentmodel.Own[OutputStream], ErrorCode] {
-		return ResultErr[componentmodel.Own[OutputStream]](ErrorCode("unsupported"))
+	hi.AddFunction("[method]descriptor.append-via-stream", func(self host.Borrow[*Descriptor]) Result[host.Own[OutputStream], ErrorCode] {
+		return ResultErr[host.Own[OutputStream]](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.advise", func(self componentmodel.Borrow[*Descriptor], offset Filesize, length Filesize, advice Advice) Result[Void, ErrorCode] {
+	hi.AddFunction("[method]descriptor.advise", func(self host.Borrow[*Descriptor], offset Filesize, length Filesize, advice Advice) Result[Void, ErrorCode] {
 		return ResultErr[Void](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.sync-data", func(self componentmodel.Borrow[*Descriptor]) Result[Void, ErrorCode] {
+	hi.AddFunction("[method]descriptor.sync-data", func(self host.Borrow[*Descriptor]) Result[Void, ErrorCode] {
 		return ResultErr[Void](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.get-flags", func(self componentmodel.Borrow[*Descriptor]) Result[DescriptorFlags, ErrorCode] {
+	hi.AddFunction("[method]descriptor.get-flags", func(self host.Borrow[*Descriptor]) Result[DescriptorFlags, ErrorCode] {
 		return ResultErr[DescriptorFlags](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.get-type", func(self componentmodel.Borrow[*Descriptor]) Result[DescriptorType, ErrorCode] {
+	hi.AddFunction("[method]descriptor.get-type", func(self host.Borrow[*Descriptor]) Result[DescriptorType, ErrorCode] {
 		return ResultErr[DescriptorType](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.set-size", func(self componentmodel.Borrow[*Descriptor], size Filesize) Result[Void, ErrorCode] {
+	hi.AddFunction("[method]descriptor.set-size", func(self host.Borrow[*Descriptor], size Filesize) Result[Void, ErrorCode] {
 		return ResultErr[Void](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.set-times", func(self componentmodel.Borrow[*Descriptor], dataAccessTimestamp NewTimestamp, dataModificationTimestamp NewTimestamp) Result[Void, ErrorCode] {
+	hi.AddFunction("[method]descriptor.set-times", func(self host.Borrow[*Descriptor], dataAccessTimestamp NewTimestamp, dataModificationTimestamp NewTimestamp) Result[Void, ErrorCode] {
 		return ResultErr[Void](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.read", func(self componentmodel.Borrow[*Descriptor], length componentmodel.U64, offset componentmodel.U64) Result[Tuple2[componentmodel.ByteArray, componentmodel.Bool], ErrorCode] {
+	hi.AddFunction("[method]descriptor.read", func(self host.Borrow[*Descriptor], length componentmodel.U64, offset componentmodel.U64) Result[Tuple2[componentmodel.ByteArray, componentmodel.Bool], ErrorCode] {
 		return ResultErr[Tuple2[componentmodel.ByteArray, componentmodel.Bool]](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.write", func(self componentmodel.Borrow[*Descriptor], buffer componentmodel.ByteArray, offset componentmodel.U64) Result[componentmodel.U64, ErrorCode] {
+	hi.AddFunction("[method]descriptor.write", func(self host.Borrow[*Descriptor], buffer componentmodel.ByteArray, offset componentmodel.U64) Result[componentmodel.U64, ErrorCode] {
 		return ResultErr[componentmodel.U64](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.read-directory", func(self componentmodel.Borrow[*Descriptor]) Result[DirectoryEntryStream, ErrorCode] {
+	hi.AddFunction("[method]descriptor.read-directory", func(self host.Borrow[*Descriptor]) Result[DirectoryEntryStream, ErrorCode] {
 		return ResultErr[DirectoryEntryStream](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.sync", func(self componentmodel.Borrow[*Descriptor]) Result[Void, ErrorCode] {
+	hi.AddFunction("[method]descriptor.sync", func(self host.Borrow[*Descriptor]) Result[Void, ErrorCode] {
 		return ResultErr[Void](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.create-directory-at", func(self componentmodel.Borrow[*Descriptor], path componentmodel.String) Result[Void, ErrorCode] {
+	hi.AddFunction("[method]descriptor.create-directory-at", func(self host.Borrow[*Descriptor], path componentmodel.String) Result[Void, ErrorCode] {
 		return ResultErr[Void](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.stat", func(self componentmodel.Borrow[*Descriptor]) Result[DescriptorStat, ErrorCode] {
+	hi.AddFunction("[method]descriptor.stat", func(self host.Borrow[*Descriptor]) Result[DescriptorStat, ErrorCode] {
 		return ResultErr[DescriptorStat](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.stat-at", func(self componentmodel.Borrow[*Descriptor], pathFlags PathFlags, path componentmodel.String) Result[DescriptorStat, ErrorCode] {
+	hi.AddFunction("[method]descriptor.stat-at", func(self host.Borrow[*Descriptor], pathFlags PathFlags, path componentmodel.String) Result[DescriptorStat, ErrorCode] {
 		return ResultErr[DescriptorStat](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.set-times-at", func(self componentmodel.Borrow[*Descriptor], pathFlags PathFlags, path componentmodel.String, dataAccessTimestamp NewTimestamp, dataModificationTimestamp NewTimestamp) Result[Void, ErrorCode] {
+	hi.AddFunction("[method]descriptor.set-times-at", func(self host.Borrow[*Descriptor], pathFlags PathFlags, path componentmodel.String, dataAccessTimestamp NewTimestamp, dataModificationTimestamp NewTimestamp) Result[Void, ErrorCode] {
 		return ResultErr[Void](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.link-at", func(self componentmodel.Borrow[*Descriptor], oldPathFlags PathFlags, oldPath componentmodel.String, newDescriptor componentmodel.Borrow[*Descriptor], newPath componentmodel.String) Result[Void, ErrorCode] {
+	hi.AddFunction("[method]descriptor.link-at", func(self host.Borrow[*Descriptor], oldPathFlags PathFlags, oldPath componentmodel.String, newDescriptor host.Borrow[*Descriptor], newPath componentmodel.String) Result[Void, ErrorCode] {
 		return ResultErr[Void](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.open-at", func(self componentmodel.Borrow[*Descriptor], pathFlags PathFlags, path componentmodel.String, openFlags OpenFlags, flags DescriptorFlags) Result[componentmodel.Own[*Descriptor], ErrorCode] {
-		return ResultErr[componentmodel.Own[*Descriptor]](ErrorCode("unsupported"))
+	hi.AddFunction("[method]descriptor.open-at", func(self host.Borrow[*Descriptor], pathFlags PathFlags, path componentmodel.String, openFlags OpenFlags, flags DescriptorFlags) Result[host.Own[*Descriptor], ErrorCode] {
+		return ResultErr[host.Own[*Descriptor]](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.readlink-at", func(self componentmodel.Borrow[*Descriptor], path componentmodel.String) Result[componentmodel.String, ErrorCode] {
+	hi.AddFunction("[method]descriptor.readlink-at", func(self host.Borrow[*Descriptor], path componentmodel.String) Result[componentmodel.String, ErrorCode] {
 		return ResultErr[componentmodel.String](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.remove-directory-at", func(self componentmodel.Borrow[*Descriptor], path componentmodel.String) Result[Void, ErrorCode] {
+	hi.AddFunction("[method]descriptor.remove-directory-at", func(self host.Borrow[*Descriptor], path componentmodel.String) Result[Void, ErrorCode] {
 		return ResultErr[Void](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.rename-at", func(self componentmodel.Borrow[*Descriptor], oldPath string, newDescriptor componentmodel.Borrow[*Descriptor], newPath string) Result[Void, ErrorCode] {
+	hi.AddFunction("[method]descriptor.rename-at", func(self host.Borrow[*Descriptor], oldPath string, newDescriptor host.Borrow[*Descriptor], newPath string) Result[Void, ErrorCode] {
 		return ResultErr[Void](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.symlink-at", func(self componentmodel.Borrow[*Descriptor], oldPath string, newPath string) Result[Void, ErrorCode] {
+	hi.AddFunction("[method]descriptor.symlink-at", func(self host.Borrow[*Descriptor], oldPath string, newPath string) Result[Void, ErrorCode] {
 		return ResultErr[Void](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.unlink-file-at", func(self componentmodel.Borrow[*Descriptor], path string) Result[Void, ErrorCode] {
+	hi.AddFunction("[method]descriptor.unlink-file-at", func(self host.Borrow[*Descriptor], path string) Result[Void, ErrorCode] {
 		return ResultErr[Void](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.is-same-object", func(self componentmodel.Borrow[*Descriptor], other componentmodel.Borrow[*Descriptor]) componentmodel.Bool {
-		return self.Resource == other.Resource
+	hi.AddFunction("[method]descriptor.is-same-object", func(self host.Borrow[*Descriptor], other host.Borrow[*Descriptor]) componentmodel.Bool {
+		return self.Resource() == other.Resource()
 	})
 
-	hi.AddFunction("[method]descriptor.metadata-hash", func(self componentmodel.Borrow[*Descriptor]) Result[MetadataHashValue, ErrorCode] {
+	hi.AddFunction("[method]descriptor.metadata-hash", func(self host.Borrow[*Descriptor]) Result[MetadataHashValue, ErrorCode] {
 		return ResultErr[MetadataHashValue](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]descriptor.metadata-hash-at", func(self componentmodel.Borrow[*Descriptor], pathFlags PathFlags, path componentmodel.String) Result[MetadataHashValue, ErrorCode] {
+	hi.AddFunction("[method]descriptor.metadata-hash-at", func(self host.Borrow[*Descriptor], pathFlags PathFlags, path componentmodel.String) Result[MetadataHashValue, ErrorCode] {
 		return ResultErr[MetadataHashValue](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("[method]directory-entry-stream.read-directory-entry", func(self componentmodel.Borrow[*DirectoryEntryStream]) Result[Option[DirectoryEntry], ErrorCode] {
+	hi.AddFunction("[method]directory-entry-stream.read-directory-entry", func(self host.Borrow[*DirectoryEntryStream]) Result[Option[DirectoryEntry], ErrorCode] {
 		return ResultErr[Option[DirectoryEntry]](ErrorCode("unsupported"))
 	})
 
-	hi.AddFunction("filesystem-error-code", func(err componentmodel.Borrow[IOError]) Option[ErrorCode] {
+	hi.AddFunction("filesystem-error-code", func(err host.Borrow[IOError]) Option[ErrorCode] {
 		return OptionNone[ErrorCode]()
 	})
 
@@ -395,7 +395,7 @@ func CreateFilesystemPreopensInstance(
 ) *host.Instance {
 	hi := host.NewInstance()
 	hi.AddTypeExport("descriptor", host.ResourceTypeFor[*Descriptor](hi, typesInstance))
-	hi.AddFunction("get-directories", func() []Tuple2[componentmodel.Own[*Descriptor], string] {
+	hi.AddFunction("get-directories", func() []Tuple2[host.Own[*Descriptor], string] {
 		return nil
 	})
 	return hi

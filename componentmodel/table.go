@@ -1,33 +1,14 @@
 package componentmodel
 
-import "reflect"
-
-type tables map[reflect.Type]any
-
-func newTables() tables {
-	return make(tables)
-}
-
-func getTable[T any](inst *Instance) *Table[T] {
-	typ := reflect.TypeFor[T]()
-	table, ok := inst.tables[typ]
-	if !ok {
-		newTable := newTable[T]()
-		inst.tables[typ] = newTable
-		return newTable
-	}
-	return table.(*Table[T])
-}
-
 const maxTableSize = 1 << 28
 
-type Table[T any] struct {
+type table[T any] struct {
 	entries []tableEntry[T]
 	free    []uint32
 }
 
-func newTable[T any]() *Table[T] {
-	return &Table[T]{
+func newTable[T any]() *table[T] {
+	return &table[T]{
 		entries: []tableEntry[T]{
 			{
 				set: false,
@@ -36,7 +17,7 @@ func newTable[T any]() *Table[T] {
 	}
 }
 
-func (t *Table[T]) Add(entry T) uint32 {
+func (t *table[T]) add(entry T) uint32 {
 	if len(t.free) > 0 {
 		idx := t.free[len(t.free)-1]
 		t.free = t.free[:len(t.free)-1]
@@ -57,7 +38,7 @@ func (t *Table[T]) Add(entry T) uint32 {
 	return uint32(idx)
 }
 
-func (t *Table[T]) Get(idx uint32) T {
+func (t *table[T]) get(idx uint32) T {
 	if idx >= uint32(len(t.entries)) {
 		panic("invalid table index")
 	}
@@ -68,7 +49,7 @@ func (t *Table[T]) Get(idx uint32) T {
 	return entry.value
 }
 
-func (t *Table[T]) Remove(idx uint32) T {
+func (t *table[T]) remove(idx uint32) T {
 	if idx >= uint32(len(t.entries)) {
 		panic("invalid table index")
 	}

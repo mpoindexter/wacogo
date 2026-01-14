@@ -49,8 +49,8 @@ func CreateStdoutInstance(
 	hi := host.NewInstance()
 
 	hi.AddTypeExport("output-stream", host.ResourceTypeFor[OutputStream](hi, streamsInstance))
-	hi.MustAddFunction("get-stdout", func() componentmodel.Own[OutputStream] {
-		return componentmodel.Own[OutputStream]{Resource: OutputStream{w: w}}
+	hi.MustAddFunction("get-stdout", func() host.Own[OutputStream] {
+		return host.NewOwn(OutputStream{w: w})
 	})
 	return hi
 }
@@ -62,8 +62,8 @@ func CreateStderrInstance(
 	hi := host.NewInstance()
 	hi.AddTypeExport("output-stream", host.ResourceTypeFor[OutputStream](hi, streamsInstance))
 
-	hi.MustAddFunction("get-stderr", func() componentmodel.Own[OutputStream] {
-		return componentmodel.Own[OutputStream]{Resource: OutputStream{w: w}}
+	hi.MustAddFunction("get-stderr", func() host.Own[OutputStream] {
+		return host.NewOwn(OutputStream{w: w})
 	})
 	return hi
 }
@@ -75,8 +75,8 @@ func CreateStdinInstance(
 	hi := host.NewInstance()
 	hi.AddTypeExport("input-stream", host.ResourceTypeFor[InputStream](hi, streamsInstance))
 
-	hi.MustAddFunction("get-stdin", func() componentmodel.Own[InputStream] {
-		return componentmodel.Own[InputStream]{Resource: InputStream{r: in}}
+	hi.MustAddFunction("get-stdin", func() host.Own[InputStream] {
+		return host.NewOwn(InputStream{r: in})
 	})
 
 	return hi

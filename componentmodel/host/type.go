@@ -58,17 +58,17 @@ func valueTypeFor(inst *Instance, t reflect.Type) (componentmodel.ValueType, boo
 
 	// Resource Handle
 	type handleType interface {
-		ResourceType() reflect.Type
-		HandleValueType(t *componentmodel.ResourceType) componentmodel.ValueType
+		resourceType() reflect.Type
+		handleValueType(rt *componentmodel.ResourceType) componentmodel.ValueType
 	}
 
 	if t.Implements(reflect.TypeFor[handleType]()) {
 		ht := reflect.Zero(t).Interface().(handleType)
-		if rt, ok := inst.resourceTypes[ht.ResourceType()]; ok {
-			return ht.HandleValueType(rt), true
+		if rt, ok := inst.resourceTypes[ht.resourceType()]; ok {
+			return ht.handleValueType(rt), true
 		}
 
-		panic(fmt.Sprintf("valueTypeFor: unbound resource type %s", ht.ResourceType()))
+		panic(fmt.Sprintf("valueTypeFor: unbound resource type %s", ht.resourceType()))
 	}
 
 	// Generic self provided type

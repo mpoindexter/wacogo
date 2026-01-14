@@ -77,27 +77,29 @@ func (hi *Instance) AddFunction(name string, fn any) error {
 	}
 
 	modelFn := componentmodel.NewFunction(
-		hi.instance,
 		&componentmodel.FunctionType{
 			ParamTypes: paramTypes,
 			ResultType: resultType,
 		},
-		func(ctx context.Context, params []componentmodel.Value) componentmodel.Value {
+		func(ctx context.Context, params []componentmodel.Value) (componentmodel.Value, error) {
 			if len(params) != len(paramConverters) {
-				panic(fmt.Errorf("expected %d parameters, got %d", len(paramConverters), len(params)))
+				return nil, fmt.Errorf("expected %d parameters, got %d", len(paramConverters), len(params))
+			}
+			cc := &callContext{
+				instance: hi,
 			}
 			var hostParams []reflect.Value
 			for i, param := range params {
-				hostParam := paramConverters[i].toHost(param)
+				hostParam := paramConverters[i].toHost(cc, param)
 				hostParams = append(hostParams, reflect.ValueOf(hostParam))
 			}
 			results := reflect.ValueOf(fn).Call(hostParams)
 			if len(results) == 0 {
-				return nil
+				return nil, nil
 			}
 			hostResult := results[0].Interface()
-			componentResult := resultConverter.fromHost(hostResult)
-			return componentResult
+			componentResult := resultConverter.fromHost(cc, hostResult)
+			return componentResult, nil
 		},
 	)
 	hi.exports[name] = modelFn

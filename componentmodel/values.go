@@ -21,10 +21,10 @@ type ValueType interface {
 	alignment() int
 	elementSize() int
 	flatTypes() []api.ValueType
-	liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error)
-	load(ctx *LiftLoadContext, offset uint32) (Value, error)
-	lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error)
-	store(ctx *LiftLoadContext, offset uint32, val Value) error
+	liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error)
+	load(llc *LiftLoadContext, offset uint32) (Value, error)
+	lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error)
+	store(llc *LiftLoadContext, offset uint32, val Value) error
 }
 
 type primitiveValueType[T ValueType, V Value] struct{}
@@ -52,12 +52,12 @@ func (t BoolType) alignment() int             { return 1 }
 func (t BoolType) elementSize() int           { return 1 }
 func (t BoolType) flatTypes() []api.ValueType { return []api.ValueType{api.ValueTypeI32} }
 
-func (t BoolType) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t BoolType) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	return Bool(itr() != 0), nil
 }
 
-func (t BoolType) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	b, ok := ctx.memory.ReadByte(offset)
+func (t BoolType) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	b, ok := llc.memory.ReadByte(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read byte at offset %d", offset)
 	}
@@ -67,7 +67,7 @@ func (t BoolType) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
 	return Bool(false), nil
 }
 
-func (t BoolType) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
+func (t BoolType) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
 	boolVal := val.(Bool)
 	var flat uint64
 	if boolVal {
@@ -78,7 +78,7 @@ func (t BoolType) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
 	return []uint64{flat}, nil
 }
 
-func (t BoolType) store(ctx *LiftLoadContext, offset uint32, val Value) error {
+func (t BoolType) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	boolVal := val.(Bool)
 	var b byte
 	if boolVal {
@@ -86,7 +86,7 @@ func (t BoolType) store(ctx *LiftLoadContext, offset uint32, val Value) error {
 	} else {
 		b = 0
 	}
-	ok := ctx.memory.WriteByte(offset, b)
+	ok := llc.memory.WriteByte(offset, b)
 	if !ok {
 		return fmt.Errorf("failed to write byte at offset %d", offset)
 	}
@@ -105,26 +105,26 @@ func (t U8Type) alignment() int             { return 1 }
 func (t U8Type) elementSize() int           { return 1 }
 func (t U8Type) flatTypes() []api.ValueType { return []api.ValueType{api.ValueTypeI32} }
 
-func (t U8Type) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t U8Type) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	return U8(itr()), nil
 }
 
-func (t U8Type) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	b, ok := ctx.memory.ReadByte(offset)
+func (t U8Type) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	b, ok := llc.memory.ReadByte(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read byte at offset %d", offset)
 	}
 	return U8(b), nil
 }
 
-func (t U8Type) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
+func (t U8Type) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
 	u8Val := val.(U8)
 	return []uint64{uint64(u8Val)}, nil
 }
 
-func (t U8Type) store(ctx *LiftLoadContext, offset uint32, val Value) error {
+func (t U8Type) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	u8Val := val.(U8)
-	ok := ctx.memory.WriteByte(offset, byte(u8Val))
+	ok := llc.memory.WriteByte(offset, byte(u8Val))
 	if !ok {
 		return fmt.Errorf("failed to write byte at offset %d", offset)
 	}
@@ -143,25 +143,25 @@ func (t U16Type) alignment() int             { return 2 }
 func (t U16Type) elementSize() int           { return 2 }
 func (t U16Type) flatTypes() []api.ValueType { return []api.ValueType{api.ValueTypeI32} }
 
-func (t U16Type) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t U16Type) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	return U16(itr()), nil
 }
 
-func (t U16Type) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	val, ok := ctx.memory.ReadUint16Le(offset)
+func (t U16Type) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	val, ok := llc.memory.ReadUint16Le(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read uint16 at offset %d", offset)
 	}
 	return U16(val), nil
 }
 
-func (t U16Type) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
+func (t U16Type) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
 	u16Val := val.(U16)
 	return []uint64{uint64(u16Val)}, nil
 }
 
-func (t U16Type) store(ctx *LiftLoadContext, offset uint32, val Value) error {
-	ok := ctx.memory.WriteUint16Le(offset, uint16(val.(U16)))
+func (t U16Type) store(llc *LiftLoadContext, offset uint32, val Value) error {
+	ok := llc.memory.WriteUint16Le(offset, uint16(val.(U16)))
 	if !ok {
 		return fmt.Errorf("failed to write uint16 at offset %d", offset)
 	}
@@ -180,25 +180,25 @@ func (t U32Type) alignment() int             { return 4 }
 func (t U32Type) elementSize() int           { return 4 }
 func (t U32Type) flatTypes() []api.ValueType { return []api.ValueType{api.ValueTypeI32} }
 
-func (t U32Type) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t U32Type) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	return U32(itr()), nil
 }
 
-func (t U32Type) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	val, ok := ctx.memory.ReadUint32Le(offset)
+func (t U32Type) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	val, ok := llc.memory.ReadUint32Le(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read uint32 at offset %d", offset)
 	}
 	return U32(val), nil
 }
 
-func (t U32Type) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
+func (t U32Type) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
 	u32Val := val.(U32)
 	return []uint64{uint64(u32Val)}, nil
 }
 
-func (t U32Type) store(ctx *LiftLoadContext, offset uint32, val Value) error {
-	ok := ctx.memory.WriteUint32Le(offset, uint32(val.(U32)))
+func (t U32Type) store(llc *LiftLoadContext, offset uint32, val Value) error {
+	ok := llc.memory.WriteUint32Le(offset, uint32(val.(U32)))
 	if !ok {
 		return fmt.Errorf("failed to write uint32 at offset %d", offset)
 	}
@@ -217,25 +217,25 @@ func (t U64Type) alignment() int             { return 8 }
 func (t U64Type) elementSize() int           { return 8 }
 func (t U64Type) flatTypes() []api.ValueType { return []api.ValueType{api.ValueTypeI64} }
 
-func (t U64Type) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t U64Type) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	return U64(itr()), nil
 }
 
-func (t U64Type) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	val, ok := ctx.memory.ReadUint64Le(offset)
+func (t U64Type) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	val, ok := llc.memory.ReadUint64Le(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read uint64 at offset %d", offset)
 	}
 	return U64(val), nil
 }
 
-func (t U64Type) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
+func (t U64Type) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
 	u64Val := val.(U64)
 	return []uint64{uint64(u64Val)}, nil
 }
 
-func (t U64Type) store(ctx *LiftLoadContext, offset uint32, val Value) error {
-	ok := ctx.memory.WriteUint64Le(offset, uint64(val.(U64)))
+func (t U64Type) store(llc *LiftLoadContext, offset uint32, val Value) error {
+	ok := llc.memory.WriteUint64Le(offset, uint64(val.(U64)))
 	if !ok {
 		return fmt.Errorf("failed to write uint64 at offset %d", offset)
 	}
@@ -254,26 +254,26 @@ func (t S8Type) alignment() int             { return 1 }
 func (t S8Type) elementSize() int           { return 1 }
 func (t S8Type) flatTypes() []api.ValueType { return []api.ValueType{api.ValueTypeI32} }
 
-func (t S8Type) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t S8Type) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	return S8(itr()), nil
 }
 
-func (t S8Type) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	b, ok := ctx.memory.ReadByte(offset)
+func (t S8Type) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	b, ok := llc.memory.ReadByte(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read byte at offset %d", offset)
 	}
 	return S8(int8(b)), nil
 }
 
-func (t S8Type) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
+func (t S8Type) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
 	s8Val := val.(S8)
 	return []uint64{uint64(int64(s8Val))}, nil
 }
 
-func (t S8Type) store(ctx *LiftLoadContext, offset uint32, val Value) error {
+func (t S8Type) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	s8Val := val.(S8)
-	ok := ctx.memory.WriteByte(offset, byte(s8Val))
+	ok := llc.memory.WriteByte(offset, byte(s8Val))
 	if !ok {
 		return fmt.Errorf("failed to write byte at offset %d", offset)
 	}
@@ -292,26 +292,26 @@ func (t S16Type) alignment() int             { return 2 }
 func (t S16Type) elementSize() int           { return 2 }
 func (t S16Type) flatTypes() []api.ValueType { return []api.ValueType{api.ValueTypeI32} }
 
-func (t S16Type) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t S16Type) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	return S16(itr()), nil
 }
 
-func (t S16Type) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	val, ok := ctx.memory.ReadUint16Le(offset)
+func (t S16Type) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	val, ok := llc.memory.ReadUint16Le(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read uint16 at offset %d", offset)
 	}
 	return S16(int16(val)), nil
 }
 
-func (t S16Type) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
+func (t S16Type) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
 	s16Val := val.(S16)
 	return []uint64{uint64(int64(s16Val))}, nil
 }
 
-func (t S16Type) store(ctx *LiftLoadContext, offset uint32, val Value) error {
+func (t S16Type) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	s16Val := val.(S16)
-	ok := ctx.memory.WriteUint16Le(offset, uint16(s16Val))
+	ok := llc.memory.WriteUint16Le(offset, uint16(s16Val))
 	if !ok {
 		return fmt.Errorf("failed to write uint16 at offset %d", offset)
 	}
@@ -330,26 +330,26 @@ func (t S32Type) alignment() int             { return 4 }
 func (t S32Type) elementSize() int           { return 4 }
 func (t S32Type) flatTypes() []api.ValueType { return []api.ValueType{api.ValueTypeI32} }
 
-func (t S32Type) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t S32Type) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	return S32(itr()), nil
 }
 
-func (t S32Type) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	val, ok := ctx.memory.ReadUint32Le(offset)
+func (t S32Type) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	val, ok := llc.memory.ReadUint32Le(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read uint32 at offset %d", offset)
 	}
 	return S32(int32(val)), nil
 }
 
-func (t S32Type) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
+func (t S32Type) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
 	s32Val := val.(S32)
 	return []uint64{uint64(int64(s32Val))}, nil
 }
 
-func (t S32Type) store(ctx *LiftLoadContext, offset uint32, val Value) error {
+func (t S32Type) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	s32Val := val.(S32)
-	ok := ctx.memory.WriteUint32Le(offset, uint32(s32Val))
+	ok := llc.memory.WriteUint32Le(offset, uint32(s32Val))
 	if !ok {
 		return fmt.Errorf("failed to write uint32 at offset %d", offset)
 	}
@@ -368,26 +368,26 @@ func (t S64Type) alignment() int             { return 8 }
 func (t S64Type) elementSize() int           { return 8 }
 func (t S64Type) flatTypes() []api.ValueType { return []api.ValueType{api.ValueTypeI64} }
 
-func (t S64Type) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t S64Type) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	return S64(itr()), nil
 }
 
-func (t S64Type) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	val, ok := ctx.memory.ReadUint64Le(offset)
+func (t S64Type) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	val, ok := llc.memory.ReadUint64Le(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read uint64 at offset %d", offset)
 	}
 	return S64(int64(val)), nil
 }
 
-func (t S64Type) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
+func (t S64Type) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
 	s64Val := val.(S64)
 	return []uint64{uint64(s64Val)}, nil
 }
 
-func (t S64Type) store(ctx *LiftLoadContext, offset uint32, val Value) error {
+func (t S64Type) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	s64Val := val.(S64)
-	ok := ctx.memory.WriteUint64Le(offset, uint64(s64Val))
+	ok := llc.memory.WriteUint64Le(offset, uint64(s64Val))
 	if !ok {
 		return fmt.Errorf("failed to write uint64 at offset %d", offset)
 	}
@@ -406,28 +406,28 @@ func (t F32Type) alignment() int             { return 4 }
 func (t F32Type) elementSize() int           { return 4 }
 func (t F32Type) flatTypes() []api.ValueType { return []api.ValueType{api.ValueTypeF32} }
 
-func (t F32Type) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t F32Type) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	v := api.DecodeF32(itr())
 	return F32(v), nil
 }
 
-func (t F32Type) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	v, ok := ctx.memory.ReadFloat32Le(offset)
+func (t F32Type) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	v, ok := llc.memory.ReadFloat32Le(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read float32 at offset %d", offset)
 	}
 	return F32(v), nil
 }
 
-func (t F32Type) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
+func (t F32Type) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
 	f32Val := val.(F32)
 	flat := api.EncodeF32(float32(f32Val))
 	return []uint64{flat}, nil
 }
 
-func (t F32Type) store(ctx *LiftLoadContext, offset uint32, val Value) error {
+func (t F32Type) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	f32Val := val.(F32)
-	ok := ctx.memory.WriteFloat32Le(offset, float32(f32Val))
+	ok := llc.memory.WriteFloat32Le(offset, float32(f32Val))
 	if !ok {
 		return fmt.Errorf("failed to write float32 at offset %d", offset)
 	}
@@ -446,28 +446,28 @@ func (t F64Type) alignment() int             { return 8 }
 func (t F64Type) elementSize() int           { return 8 }
 func (t F64Type) flatTypes() []api.ValueType { return []api.ValueType{api.ValueTypeF64} }
 
-func (t F64Type) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t F64Type) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	v := api.DecodeF64(itr())
 	return F64(v), nil
 }
 
-func (t F64Type) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	v, ok := ctx.memory.ReadFloat64Le(offset)
+func (t F64Type) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	v, ok := llc.memory.ReadFloat64Le(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read float64 at offset %d", offset)
 	}
 	return F64(v), nil
 }
 
-func (t F64Type) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
+func (t F64Type) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
 	f64Val := val.(F64)
 	flat := api.EncodeF64(float64(f64Val))
 	return []uint64{flat}, nil
 }
 
-func (t F64Type) store(ctx *LiftLoadContext, offset uint32, val Value) error {
+func (t F64Type) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	f64Val := val.(F64)
-	ok := ctx.memory.WriteFloat64Le(offset, float64(f64Val))
+	ok := llc.memory.WriteFloat64Le(offset, float64(f64Val))
 	if !ok {
 		return fmt.Errorf("failed to write float64 at offset %d", offset)
 	}
@@ -486,26 +486,26 @@ func (t CharType) alignment() int             { return 4 }
 func (t CharType) elementSize() int           { return 4 }
 func (t CharType) flatTypes() []api.ValueType { return []api.ValueType{api.ValueTypeI32} }
 
-func (t CharType) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t CharType) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	return Char(itr()), nil
 }
 
-func (t CharType) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	val, ok := ctx.memory.ReadUint32Le(offset)
+func (t CharType) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	val, ok := llc.memory.ReadUint32Le(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read uint32 at offset %d", offset)
 	}
 	return Char(val), nil
 }
 
-func (t CharType) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
+func (t CharType) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
 	charVal := val.(Char)
 	return []uint64{uint64(charVal)}, nil
 }
 
-func (t CharType) store(ctx *LiftLoadContext, offset uint32, val Value) error {
+func (t CharType) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	charVal := val.(Char)
-	ok := ctx.memory.WriteUint32Le(offset, uint32(charVal))
+	ok := llc.memory.WriteUint32Le(offset, uint32(charVal))
 	if !ok {
 		return fmt.Errorf("failed to write uint32 at offset %d", offset)
 	}
@@ -526,34 +526,34 @@ func (t StringType) flatTypes() []api.ValueType {
 	return []api.ValueType{api.ValueTypeI32, api.ValueTypeI32}
 }
 
-func (t StringType) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t StringType) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	ptr := uint32(itr())
 	length := uint32(itr())
-	return t.readString(ctx, ptr, length)
+	return t.readString(llc, ptr, length)
 }
 
-func (t StringType) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	ptr, ok := ctx.memory.ReadUint32Le(offset)
+func (t StringType) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	ptr, ok := llc.memory.ReadUint32Le(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read string pointer at offset %d", offset)
 	}
-	length, ok := ctx.memory.ReadUint32Le(offset + 4)
+	length, ok := llc.memory.ReadUint32Le(offset + 4)
 	if !ok {
 		return nil, fmt.Errorf("failed to read string length at offset %d", offset+4)
 	}
-	return t.readString(ctx, ptr, length)
+	return t.readString(llc, ptr, length)
 }
 
-func (t StringType) readString(ctx *LiftLoadContext, ptr uint32, length uint32) (String, error) {
-	switch ctx.stringEncoding {
+func (t StringType) readString(llc *LiftLoadContext, ptr uint32, length uint32) (String, error) {
+	switch llc.stringEncoding {
 	case stringEncodingUTF8:
-		bytes, ok := ctx.memory.Read(ptr, length)
+		bytes, ok := llc.memory.Read(ptr, length)
 		if !ok {
 			return "", fmt.Errorf("failed to read string bytes at ptr %d with length %d", ptr, length)
 		}
 		return String(bytes), nil
 	case stringEncodingUTF16:
-		bytes, ok := ctx.memory.Read(ptr, length*2)
+		bytes, ok := llc.memory.Read(ptr, length*2)
 		if !ok {
 			return "", fmt.Errorf("failed to read string bytes at ptr %d with length %d", ptr, length*2)
 		}
@@ -567,7 +567,7 @@ func (t StringType) readString(ctx *LiftLoadContext, ptr uint32, length uint32) 
 		if (length & (1 << 31)) != 0 {
 			// UTF-16 encoded
 			readLength := 2 * (length & 0x7FFFFFFF)
-			bytes, ok := ctx.memory.Read(ptr, readLength)
+			bytes, ok := llc.memory.Read(ptr, readLength)
 			if !ok {
 				return "", fmt.Errorf("failed to read string bytes at ptr %d with length %d", ptr, readLength)
 			}
@@ -579,7 +579,7 @@ func (t StringType) readString(ctx *LiftLoadContext, ptr uint32, length uint32) 
 			return String(decoded), nil
 		} else {
 			// Latin-1 encoded
-			bytes, ok := ctx.memory.Read(ptr, length)
+			bytes, ok := llc.memory.Read(ptr, length)
 			if !ok {
 				return "", fmt.Errorf("failed to read string bytes at ptr %d with length %d", ptr, length)
 			}
@@ -590,41 +590,41 @@ func (t StringType) readString(ctx *LiftLoadContext, ptr uint32, length uint32) 
 			return String(decoded), nil
 		}
 	default:
-		return "", fmt.Errorf("unsupported string encoding: %d", ctx.stringEncoding)
+		return "", fmt.Errorf("unsupported string encoding: %d", llc.stringEncoding)
 	}
 }
 
-func (t StringType) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
-	ptr, len, err := t.writeString(ctx, val.(String))
+func (t StringType) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
+	ptr, len, err := t.writeString(llc, val.(String))
 	if err != nil {
 		return nil, err
 	}
 	return []uint64{uint64(ptr), uint64(len)}, nil
 }
 
-func (t StringType) store(ctx *LiftLoadContext, offset uint32, val Value) error {
+func (t StringType) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	strVal := val.(String)
-	ptr, len, err := t.writeString(ctx, strVal)
+	ptr, len, err := t.writeString(llc, strVal)
 	if err != nil {
 		return err
 	}
-	ok := ctx.memory.WriteUint32Le(offset, ptr)
+	ok := llc.memory.WriteUint32Le(offset, ptr)
 	if !ok {
 		return fmt.Errorf("failed to write string pointer at offset %d", offset)
 	}
-	ok = ctx.memory.WriteUint32Le(offset+4, len)
+	ok = llc.memory.WriteUint32Le(offset+4, len)
 	if !ok {
 		return fmt.Errorf("failed to write string length at offset %d", offset+4)
 	}
 	return nil
 }
 
-func (t StringType) writeString(ctx *LiftLoadContext, str String) (uint32, uint32, error) {
-	switch ctx.stringEncoding {
+func (t StringType) writeString(llc *LiftLoadContext, str String) (uint32, uint32, error) {
+	switch llc.stringEncoding {
 	case stringEncodingUTF8:
 		bytes := []byte(str)
-		ptr := ctx.realloc(0, 0, 1, uint32(len(bytes)))
-		ok := ctx.memory.Write(ptr, bytes)
+		ptr := llc.realloc(0, 0, 1, uint32(len(bytes)))
+		ok := llc.memory.Write(ptr, bytes)
 		if !ok {
 			return 0, 0, fmt.Errorf("failed to write string bytes at ptr %d with length %d", ptr, len(bytes))
 		}
@@ -635,14 +635,14 @@ func (t StringType) writeString(ctx *LiftLoadContext, str String) (uint32, uint3
 		if err != nil {
 			return 0, 0, fmt.Errorf("failed to encode utf16 string: %w", err)
 		}
-		ptr := ctx.realloc(0, 0, 2, uint32(len(encoded)))
-		ok := ctx.memory.Write(ptr, encoded)
+		ptr := llc.realloc(0, 0, 2, uint32(len(encoded)))
+		ok := llc.memory.Write(ptr, encoded)
 		if !ok {
 			return 0, 0, fmt.Errorf("failed to write string bytes at ptr %d with length %d", ptr, len(encoded))
 		}
 		return ptr, uint32(len(encoded) / 2), nil
 	default:
-		return 0, 0, fmt.Errorf("unsupported string encoding: %d", ctx.stringEncoding)
+		return 0, 0, fmt.Errorf("unsupported string encoding: %d", llc.stringEncoding)
 	}
 }
 
@@ -737,10 +737,10 @@ func (t *RecordType) flatTypes() []api.ValueType {
 	return flats
 }
 
-func (t *RecordType) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t *RecordType) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	values := make([]Value, len(t.Fields))
 	for i, f := range t.Fields {
-		val, err := f.Type.liftFlat(ctx, itr)
+		val, err := f.Type.liftFlat(llc, itr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to lift field %s: %w", f.Name, err)
 		}
@@ -751,12 +751,12 @@ func (t *RecordType) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, e
 	}, nil
 }
 
-func (t *RecordType) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
+func (t *RecordType) load(llc *LiftLoadContext, offset uint32) (Value, error) {
 	values := make([]Value, len(t.Fields))
 	currentOffset := offset
 	for i, f := range t.Fields {
 		currentOffset = uint32(alignTo(int(currentOffset), f.Type.alignment()))
-		val, err := f.Type.load(ctx, currentOffset)
+		val, err := f.Type.load(llc, currentOffset)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load field %s: %w", f.Name, err)
 		}
@@ -768,11 +768,11 @@ func (t *RecordType) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
 	}, nil
 }
 
-func (t *RecordType) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
+func (t *RecordType) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
 	recordVal := val.(Record)
 	var flats []uint64
 	for i, f := range t.Fields {
-		fieldFlats, err := f.Type.lowerFlat(ctx, recordVal.fields[i])
+		fieldFlats, err := f.Type.lowerFlat(llc, recordVal.fields[i])
 		if err != nil {
 			return nil, fmt.Errorf("failed to lower field %s: %w", f.Name, err)
 		}
@@ -781,12 +781,12 @@ func (t *RecordType) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error
 	return flats, nil
 }
 
-func (t *RecordType) store(ctx *LiftLoadContext, offset uint32, val Value) error {
+func (t *RecordType) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	recordVal := val.(Record)
 	currentOffset := offset
 	for i, f := range t.Fields {
 		currentOffset = uint32(alignTo(int(currentOffset), f.Type.alignment()))
-		err := f.Type.store(ctx, currentOffset, recordVal.fields[i])
+		err := f.Type.store(llc, currentOffset, recordVal.fields[i])
 		if err != nil {
 			return fmt.Errorf("failed to store field %s: %w", f.Name, err)
 		}
@@ -919,7 +919,7 @@ func (t *VariantType) flatTypes() []api.ValueType {
 	return append([]api.ValueType{api.ValueTypeI32}, flats...)
 }
 
-func (t *VariantType) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t *VariantType) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	discriminant := uint32(itr())
 	if int(discriminant) >= len(t.Cases) {
 		return nil, fmt.Errorf("invalid discriminant %d for variant with %d cases", discriminant, len(t.Cases))
@@ -927,7 +927,7 @@ func (t *VariantType) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, 
 	var caseValue Value
 	caseType := t.Cases[discriminant].Type
 	if caseType != nil {
-		val, err := caseType.liftFlat(ctx, itr)
+		val, err := caseType.liftFlat(llc, itr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to lift case %s: %w", t.Cases[discriminant].Name, err)
 		}
@@ -940,23 +940,23 @@ func (t *VariantType) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, 
 	}, nil
 }
 
-func (t *VariantType) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
+func (t *VariantType) load(llc *LiftLoadContext, offset uint32) (Value, error) {
 	var discriminant uint32
 	switch t.discriminantSize() {
 	case 1:
-		b, ok := ctx.memory.ReadByte(offset)
+		b, ok := llc.memory.ReadByte(offset)
 		if !ok {
 			return nil, fmt.Errorf("failed to read variant discriminant at offset %d", offset)
 		}
 		discriminant = uint32(b)
 	case 2:
-		val, ok := ctx.memory.ReadUint16Le(offset)
+		val, ok := llc.memory.ReadUint16Le(offset)
 		if !ok {
 			return nil, fmt.Errorf("failed to read variant discriminant at offset %d", offset)
 		}
 		discriminant = uint32(val)
 	case 4:
-		val, ok := ctx.memory.ReadUint32Le(offset)
+		val, ok := llc.memory.ReadUint32Le(offset)
 		if !ok {
 			return nil, fmt.Errorf("failed to read variant discriminant at offset %d", offset)
 		}
@@ -972,7 +972,7 @@ func (t *VariantType) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
 	var caseValue Value
 	caseType := t.Cases[discriminant].Type
 	if caseType != nil {
-		val, err := caseType.load(ctx, currentOffset)
+		val, err := caseType.load(llc, currentOffset)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load case %s: %w", t.Cases[discriminant].Name, err)
 		}
@@ -985,7 +985,7 @@ func (t *VariantType) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
 	}, nil
 }
 
-func (t *VariantType) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
+func (t *VariantType) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
 	variantVal := val.(*Variant)
 	var flats []uint64
 
@@ -1002,7 +1002,7 @@ func (t *VariantType) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, erro
 	flats = append(flats, uint64(caseIdx))
 	caseType := t.Cases[caseIdx].Type
 	if caseType != nil {
-		caseFlats, err := caseType.lowerFlat(ctx, variantVal.Value)
+		caseFlats, err := caseType.lowerFlat(llc, variantVal.Value)
 		if err != nil {
 			return nil, fmt.Errorf("failed to lower case %s: %w", t.Cases[caseIdx].Name, err)
 		}
@@ -1011,7 +1011,7 @@ func (t *VariantType) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, erro
 	return flats, nil
 }
 
-func (t *VariantType) store(ctx *LiftLoadContext, offset uint32, val Value) error {
+func (t *VariantType) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	variantVal := val.(*Variant)
 	currentOffset := offset
 
@@ -1028,17 +1028,17 @@ func (t *VariantType) store(ctx *LiftLoadContext, offset uint32, val Value) erro
 	// Store discriminant
 	switch t.discriminantSize() {
 	case 1:
-		ok := ctx.memory.WriteByte(currentOffset, byte(caseIdx))
+		ok := llc.memory.WriteByte(currentOffset, byte(caseIdx))
 		if !ok {
 			return fmt.Errorf("failed to write variant discriminant at offset %d", currentOffset)
 		}
 	case 2:
-		ok := ctx.memory.WriteUint16Le(currentOffset, uint16(caseIdx))
+		ok := llc.memory.WriteUint16Le(currentOffset, uint16(caseIdx))
 		if !ok {
 			return fmt.Errorf("failed to write variant discriminant at offset %d", currentOffset)
 		}
 	case 4:
-		ok := ctx.memory.WriteUint32Le(currentOffset, uint32(caseIdx))
+		ok := llc.memory.WriteUint32Le(currentOffset, uint32(caseIdx))
 		if !ok {
 			return fmt.Errorf("failed to write variant discriminant at offset %d", currentOffset)
 		}
@@ -1049,7 +1049,7 @@ func (t *VariantType) store(ctx *LiftLoadContext, offset uint32, val Value) erro
 	currentOffset = uint32(alignTo(int(currentOffset), t.maxCaseAligment()))
 	caseType := t.Cases[caseIdx].Type
 	if caseType != nil {
-		err := caseType.store(ctx, currentOffset, variantVal.Value)
+		err := caseType.store(llc, currentOffset, variantVal.Value)
 		if err != nil {
 			return fmt.Errorf("failed to store case %s: %w", t.Cases[caseIdx].Name, err)
 		}
@@ -1093,12 +1093,12 @@ func (t *ListType) flatTypes() []api.ValueType {
 	return []api.ValueType{api.ValueTypeI32, api.ValueTypeI32}
 }
 
-func (t *ListType) loadListValues(ctx *LiftLoadContext, ptr uint32, length uint32) (Value, error) {
+func (t *ListType) loadListValues(llc *LiftLoadContext, ptr uint32, length uint32) (Value, error) {
 	elements := make(List, length)
 	currentOffset := ptr
 	elementSize := t.ElementType.elementSize()
 	for i := uint32(0); i < length; i++ {
-		val, err := t.ElementType.load(ctx, currentOffset)
+		val, err := t.ElementType.load(llc, currentOffset)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load list element %d: %w", i, err)
 		}
@@ -1108,30 +1108,30 @@ func (t *ListType) loadListValues(ctx *LiftLoadContext, ptr uint32, length uint3
 	return elements, nil
 }
 
-func (t *ListType) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t *ListType) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	ptr := uint32(itr())
 	length := uint32(itr())
-	return t.loadListValues(ctx, ptr, length)
+	return t.loadListValues(llc, ptr, length)
 }
 
-func (t *ListType) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	ptr, ok := ctx.memory.ReadUint32Le(offset)
+func (t *ListType) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	ptr, ok := llc.memory.ReadUint32Le(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read list pointer at offset %d", offset)
 	}
-	length, ok := ctx.memory.ReadUint32Le(offset + 4)
+	length, ok := llc.memory.ReadUint32Le(offset + 4)
 	if !ok {
 		return nil, fmt.Errorf("failed to read list length at offset %d", offset+4)
 	}
-	return t.loadListValues(ctx, ptr, length)
+	return t.loadListValues(llc, ptr, length)
 }
 
-func (t *ListType) storeListValues(ctx *LiftLoadContext, val Value) (uint32, int, error) {
+func (t *ListType) storeListValues(llc *LiftLoadContext, val Value) (uint32, int, error) {
 	listVal := val.(List)
-	ptr := ctx.realloc(0, 0, uint32(t.alignment()), uint32(len(listVal))*uint32(t.ElementType.elementSize()))
+	ptr := llc.realloc(0, 0, uint32(t.alignment()), uint32(len(listVal))*uint32(t.ElementType.elementSize()))
 	writeTo := uint32(alignTo(int(ptr), t.ElementType.alignment()))
 	for i := range listVal {
-		err := t.ElementType.store(ctx, writeTo, listVal[i])
+		err := t.ElementType.store(llc, writeTo, listVal[i])
 		if err != nil {
 			return 0, 0, fmt.Errorf("failed to store list element %d: %w", i, err)
 		}
@@ -1140,25 +1140,25 @@ func (t *ListType) storeListValues(ctx *LiftLoadContext, val Value) (uint32, int
 	return ptr, len(listVal), nil
 }
 
-func (t *ListType) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
-	ptr, len, err := t.storeListValues(ctx, val)
+func (t *ListType) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
+	ptr, len, err := t.storeListValues(llc, val)
 	if err != nil {
 		return nil, err
 	}
 	return []uint64{uint64(ptr), uint64(len)}, nil
 }
 
-func (t *ListType) store(ctx *LiftLoadContext, offset uint32, val Value) error {
+func (t *ListType) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	listVal := val.(List)
-	ptr, _, err := t.storeListValues(ctx, listVal)
+	ptr, _, err := t.storeListValues(llc, listVal)
 	if err != nil {
 		return err
 	}
-	ok := ctx.memory.WriteUint32Le(offset, ptr)
+	ok := llc.memory.WriteUint32Le(offset, ptr)
 	if !ok {
 		return fmt.Errorf("failed to write list pointer at offset %d", offset)
 	}
-	ok = ctx.memory.WriteUint32Le(offset+4, uint32(len(listVal)))
+	ok = llc.memory.WriteUint32Le(offset+4, uint32(len(listVal)))
 	if !ok {
 		return fmt.Errorf("failed to write list length at offset %d", offset+4)
 	}
@@ -1212,7 +1212,7 @@ func (t *FlagsType) flatTypes() []api.ValueType {
 	return []api.ValueType{api.ValueTypeI32}
 }
 
-func (t *FlagsType) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t *FlagsType) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	bits := uint32(itr())
 	flags := make(Flags)
 	for i, name := range t.FlagNames {
@@ -1221,8 +1221,8 @@ func (t *FlagsType) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, er
 	return flags, nil
 }
 
-func (t *FlagsType) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	bits, ok := ctx.memory.ReadUint32Le(offset)
+func (t *FlagsType) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	bits, ok := llc.memory.ReadUint32Le(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read flags bits at offset %d", offset)
 	}
@@ -1233,7 +1233,7 @@ func (t *FlagsType) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
 	return flags, nil
 }
 
-func (t *FlagsType) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
+func (t *FlagsType) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
 	flagsVal := val.(Flags)
 	var bits uint32
 	for i, name := range t.FlagNames {
@@ -1244,7 +1244,7 @@ func (t *FlagsType) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error)
 	return []uint64{uint64(bits)}, nil
 }
 
-func (t *FlagsType) store(ctx *LiftLoadContext, offset uint32, val Value) error {
+func (t *FlagsType) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	flagsVal := val.(Flags)
 	var bits uint32
 	for i, name := range t.FlagNames {
@@ -1252,14 +1252,12 @@ func (t *FlagsType) store(ctx *LiftLoadContext, offset uint32, val Value) error 
 			bits |= (1 << i)
 		}
 	}
-	ok := ctx.memory.WriteUint32Le(offset, bits)
+	ok := llc.memory.WriteUint32Le(offset, bits)
 	if !ok {
 		return fmt.Errorf("failed to write flags bits at offset %d", offset)
 	}
 	return nil
 }
-
-type ExternalResourceRep uint32
 
 type ResourceType struct {
 	instance   *Instance
@@ -1279,191 +1277,311 @@ func (t *ResourceType) equalsType(other Type) bool {
 	return t == other
 }
 
-type Own[T any] struct {
-	Resource T
+type ResourceHandle interface {
+	Value
+	Resource() any
+	Drop()
+	Borrow() ResourceHandle
+
+	resourceType() *ResourceType
+	isBorrowed() bool
 }
 
-func (v Own[T]) isValue() {}
-
-func (v Own[T]) ResourceType() reflect.Type {
-	return reflect.TypeFor[T]()
+func NewResourceHandle(instance *Instance, typ *ResourceType, rep any) ResourceHandle {
+	return &ownHandle{
+		instance: instance,
+		typ:      typ,
+		rep:      rep,
+	}
 }
-func (v Own[T]) HandleValueType(t *ResourceType) ValueType {
-	return OwnType[T]{ResourceType: t}
+
+type ownHandle struct {
+	instance *Instance
+	typ      *ResourceType
+	rep      any
+	numLends int
+	dropped  bool
 }
 
-type OwnType[T any] struct {
+func (h *ownHandle) isValue() {}
+
+func (h *ownHandle) resourceType() *ResourceType {
+	return h.typ
+}
+
+func (h *ownHandle) isBorrowed() bool {
+	return h.numLends > 0
+}
+
+func (h *ownHandle) Resource() any {
+	if h.dropped {
+		panic("cannot use dropped resource")
+	}
+	return h.rep
+}
+
+func (h *ownHandle) Drop() {
+	if h.dropped {
+		return
+	}
+	h.dropped = true
+	if h.typ.destructor != nil {
+		if h.typ.instance == h.instance {
+			h.typ.destructor(h.instance.currentContext, h.rep)
+		} else {
+			if err := h.typ.instance.enter(h.instance.currentContext); err != nil {
+				panic(fmt.Errorf("failed to enter instance during resource destructor: %w", err))
+			}
+			h.typ.destructor(h.instance.currentContext, h.rep)
+			if err := h.typ.instance.exit(); err != nil {
+				panic(fmt.Errorf("failed to exit instance during resource destructor: %w", err))
+			}
+		}
+	}
+}
+
+func (h *ownHandle) Borrow() ResourceHandle {
+	h.numLends++
+	h.instance.borrowCount++
+	return &borrowedHandle{
+		typ: h.typ,
+		rep: h.rep,
+		onDrop: func() {
+			h.instance.borrowCount--
+			h.numLends--
+		},
+	}
+}
+
+func (h *ownHandle) Move(inst *Instance) (ResourceHandle, error) {
+	if h.dropped {
+		return nil, fmt.Errorf("cannot move dropped resource")
+	}
+	if h.numLends > 0 {
+		return nil, fmt.Errorf("cannot move resource with active borrows")
+	}
+	h.dropped = true
+	return &ownHandle{
+		instance: inst,
+		typ:      h.typ,
+		rep:      h.rep,
+	}, nil
+}
+
+type OwnType struct {
 	ResourceType *ResourceType
 }
 
-func (t OwnType[T]) isValueType() {}
-
-func (t OwnType[T]) supportsValue(v Value) bool {
-	_, ok := v.(Own[T])
+func (t OwnType) isValueType() {}
+func (t OwnType) supportsValue(v Value) bool {
+	_, ok := v.(*ownHandle)
 	if !ok {
 		return false
 	}
 	return true
 }
 
-func (t OwnType[T]) equalsType(other Type) bool {
-	otherOwnType, ok := other.(OwnType[T])
+func (t OwnType) equalsType(other Type) bool {
+	otherOwnType, ok := other.(OwnType)
 	if !ok {
 		return false
 	}
 	return t.ResourceType.equalsType(otherOwnType.ResourceType)
 }
-func (t OwnType[T]) alignment() int   { return 4 }
-func (t OwnType[T]) elementSize() int { return 4 }
-func (t OwnType[T]) flatTypes() []api.ValueType {
+func (t OwnType) alignment() int   { return 4 }
+func (t OwnType) elementSize() int { return 4 }
+func (t OwnType) flatTypes() []api.ValueType {
 	return []api.ValueType{api.ValueTypeI32}
 }
 
-func (t OwnType[T]) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t OwnType) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	v := api.DecodeU32(itr())
-	tab := getTable[*resourceHandle[T]](t.ResourceType.instance)
-	h := tab.Remove(v)
-	if h.typ != t.ResourceType {
-		return nil, fmt.Errorf("resource handle type mismatch during lift: expected %p, got %p", t.ResourceType, h.typ)
-	}
-	if h.numLends > 0 {
-		return nil, fmt.Errorf("cannot lift owned resource while it has active borrows")
-	}
-	if !h.own {
-		return nil, fmt.Errorf("cannot lift owned resource that is not owned")
-	}
-	return Own[T]{Resource: h.rep}, nil
+	return t.lift(llc, v)
 }
 
-func (t OwnType[T]) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	v, ok := ctx.memory.ReadUint32Le(offset)
+func (t OwnType) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	v, ok := llc.memory.ReadUint32Le(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read resource handle index at offset %d", offset)
 	}
-	tab := getTable[*resourceHandle[T]](t.ResourceType.instance)
-	h := tab.Remove(v)
-	if h.typ != t.ResourceType {
-		return nil, fmt.Errorf("resource handle type mismatch during lift: expected %p, got %p", t.ResourceType, h.typ)
-	}
-	if h.numLends > 0 {
-		return nil, fmt.Errorf("cannot lift owned resource while it has active borrows")
-	}
-	if !h.own {
-		return nil, fmt.Errorf("cannot lift owned resource that is not owned")
-	}
-	return Own[T]{Resource: h.rep}, nil
+	return t.lift(llc, v)
 }
 
-func (t OwnType[T]) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
-	rsc := val.(Own[T]).Resource
-	rh := newResourceHandle(t.ResourceType, rsc, true)
-	tab := getTable[*resourceHandle[T]](ctx.instance)
-	idx := tab.Add(rh)
+func (t OwnType) lift(llc *LiftLoadContext, handleIdx uint32) (Value, error) {
+	h := llc.instance.loweredHandles.remove(handleIdx)
+	if h.resourceType() != t.ResourceType {
+		return nil, fmt.Errorf("resource handle type mismatch during lift: expected %p, got %p", t.ResourceType, h.resourceType())
+	}
+	if h.isBorrowed() {
+		return nil, fmt.Errorf("cannot lift owned resource while it has active borrows")
+	}
+
+	return &ownHandle{
+		instance: llc.instance,
+		typ:      t.ResourceType,
+		rep:      h,
+	}, nil
+}
+
+func (t OwnType) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
+	idx, err := t.lower(llc, val)
+	if err != nil {
+		return nil, err
+	}
 	return []uint64{uint64(idx)}, nil
 }
 
-func (t OwnType[T]) store(ctx *LiftLoadContext, offset uint32, val Value) error {
-	rsc := val.(Own[T]).Resource
-	rh := newResourceHandle(t.ResourceType, rsc, true)
-	tab := getTable[*resourceHandle[T]](ctx.instance)
-	idx := tab.Add(rh)
-	if !ctx.memory.WriteUint32Le(offset, idx) {
+func (t OwnType) store(llc *LiftLoadContext, offset uint32, val Value) error {
+	idx, err := t.lower(llc, val)
+	if err != nil {
+		return err
+	}
+	if !llc.memory.WriteUint32Le(offset, idx) {
 		return fmt.Errorf("failed to write resource handle index at offset %d", offset)
 	}
 	return nil
 }
 
-type Borrow[T any] struct {
-	Resource T
+func (t OwnType) lower(llc *LiftLoadContext, v Value) (uint32, error) {
+	srcHandle := v.(*ownHandle)
+	tgtHandle, err := srcHandle.Move(llc.instance)
+	if err != nil {
+		return 0, fmt.Errorf("failed to move resource handle during lower: %w", err)
+	}
+	if tgtHandle.resourceType() != t.ResourceType {
+		return 0, fmt.Errorf("resource handle type mismatch during lower: expected %p, got %p", t.ResourceType, tgtHandle.resourceType())
+	}
+
+	idx := llc.instance.loweredHandles.add(tgtHandle)
+	return idx, nil
 }
 
-func (v Borrow[T]) isValue() {}
-
-func (v Borrow[T]) ResourceType() reflect.Type {
-	return reflect.TypeFor[T]()
+type borrowedHandle struct {
+	onDrop   func()
+	typ      *ResourceType
+	rep      any
+	numLends int
+	dropped  bool
 }
-func (v Borrow[T]) HandleValueType(t *ResourceType) ValueType {
-	return BorrowType[T]{ResourceType: t}
+
+func NewBorrowedHandle(typ *ResourceType, rep any, onDrop func()) ResourceHandle {
+	return &borrowedHandle{
+		typ:    typ,
+		rep:    rep,
+		onDrop: onDrop,
+	}
 }
 
-type BorrowType[T any] struct {
+func (h *borrowedHandle) isValue() {}
+
+func (h *borrowedHandle) resourceType() *ResourceType {
+	return h.typ
+}
+
+func (h *borrowedHandle) isBorrowed() bool {
+	return h.numLends > 0
+}
+
+func (h *borrowedHandle) Resource() any {
+	if h.dropped {
+		panic("cannot use dropped resource")
+	}
+	return h.rep
+}
+
+func (h *borrowedHandle) Drop() {
+	if h.dropped {
+		return
+	}
+	if h.numLends > 0 {
+		panic("cannot drop borrowed resource with active borrows")
+	}
+	h.dropped = true
+	if h.onDrop != nil {
+		h.onDrop()
+	}
+}
+func (h *borrowedHandle) Borrow() ResourceHandle {
+	h.numLends++
+	return &borrowedHandle{
+		typ: h.typ,
+		rep: h.rep,
+		onDrop: func() {
+			h.numLends--
+		},
+	}
+}
+
+type BorrowType struct {
 	ResourceType *ResourceType
 }
 
-func (t BorrowType[T]) isValueType() {}
-func (t BorrowType[T]) supportsValue(v Value) bool {
-	_, ok := v.(Borrow[T])
+func (t BorrowType) isValueType() {}
+func (t BorrowType) supportsValue(v Value) bool {
+	_, ok := v.(ResourceHandle)
 	if !ok {
 		return false
 	}
 	return true
 }
 
-func (t BorrowType[T]) equalsType(other Type) bool {
-	otherBorrowType, ok := other.(BorrowType[T])
+func (t BorrowType) equalsType(other Type) bool {
+	otherBorrowType, ok := other.(BorrowType)
 	if !ok {
 		return false
 	}
 	return t.ResourceType.equalsType(otherBorrowType.ResourceType)
 }
-func (t BorrowType[T]) alignment() int   { return 4 }
-func (t BorrowType[T]) elementSize() int { return 4 }
-func (t BorrowType[T]) flatTypes() []api.ValueType {
+func (t BorrowType) alignment() int   { return 4 }
+func (t BorrowType) elementSize() int { return 4 }
+func (t BorrowType) flatTypes() []api.ValueType {
 	return []api.ValueType{api.ValueTypeI32}
 }
 
-func (t BorrowType[T]) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t BorrowType) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	v := api.DecodeU32(itr())
-	tab := getTable[*resourceHandle[T]](ctx.instance)
-	rh := tab.Get(v)
-	if rh.typ != t.ResourceType {
-		return nil, fmt.Errorf("resource handle type mismatch during lift: expected %p, got %p", t.ResourceType, rh.typ)
-	}
-
-	rh.numLends++
-	ctx.addCleanup(func(ctx context.Context) {
-		rh.numLends--
-	})
-
-	return Borrow[T]{Resource: rh.rep}, nil
+	return t.lift(llc, v)
 }
 
-func (t BorrowType[T]) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	v, ok := ctx.memory.ReadUint32Le(offset)
+func (t BorrowType) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	v, ok := llc.memory.ReadUint32Le(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read resource handle index at offset %d", offset)
 	}
-	tab := getTable[*resourceHandle[T]](ctx.instance)
-	rh := tab.Get(v)
-	if rh.typ != t.ResourceType {
-		return nil, fmt.Errorf("resource handle type mismatch during lift: expected %p, got %p", t.ResourceType, rh.typ)
-	}
-
-	rh.numLends++
-	ctx.addCleanup(func(ctx context.Context) {
-		rh.numLends--
-	})
-
-	return Borrow[T]{Resource: rh.rep}, nil
+	return t.lift(llc, v)
 }
 
-func (t BorrowType[T]) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
-	v := val.(Borrow[T]).Resource
-	h := newResourceHandle(t.ResourceType, v, false)
-	tab := getTable[*resourceHandle[T]](ctx.instance)
-	idx := tab.Add(h)
+func (t BorrowType) lift(llc *LiftLoadContext, handleIdx uint32) (Value, error) {
+	rh := llc.instance.loweredHandles.get(handleIdx)
+	if rh.resourceType() != t.ResourceType {
+		return nil, fmt.Errorf("resource handle type mismatch during lift: expected %p, got %p", t.ResourceType, rh.resourceType())
+	}
+	return rh, nil
+}
+
+func (t BorrowType) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
+	idx, err := t.lower(llc, val)
+	if err != nil {
+		return nil, err
+	}
 	return []uint64{uint64(idx)}, nil
 }
 
-func (t BorrowType[T]) store(ctx *LiftLoadContext, offset uint32, val Value) error {
-	borrowVal := val.(Borrow[T]).Resource
-	h := newResourceHandle(t.ResourceType, borrowVal, false)
-	tab := getTable[*resourceHandle[T]](ctx.instance)
-	idx := tab.Add(h)
-	if !ctx.memory.WriteUint32Le(offset, idx) {
+func (t BorrowType) store(llc *LiftLoadContext, offset uint32, val Value) error {
+	idx, err := t.lower(llc, val)
+	if err != nil {
+		return err
+	}
+	if !llc.memory.WriteUint32Le(offset, idx) {
 		return fmt.Errorf("failed to write resource handle index at offset %d", offset)
 	}
 	return nil
+}
+
+func (t BorrowType) lower(llc *LiftLoadContext, v Value) (uint32, error) {
+	borrowVal := v.(ResourceHandle)
+	idx := llc.instance.loweredHandles.add(borrowVal.Borrow())
+	return idx, nil
 }
 
 type ByteArray []byte
@@ -1495,53 +1613,53 @@ func (t ByteArrayType) flatTypes() []api.ValueType {
 	return []api.ValueType{api.ValueTypeI32, api.ValueTypeI32}
 }
 
-func (t ByteArrayType) liftFlat(ctx *LiftLoadContext, itr func() uint64) (Value, error) {
+func (t ByteArrayType) liftFlat(llc *LiftLoadContext, itr func() uint64) (Value, error) {
 	ptr := uint32(itr())
 	length := uint32(itr())
-	bytes, ok := ctx.memory.Read(ptr, length)
+	bytes, ok := llc.memory.Read(ptr, length)
 	if !ok {
 		return nil, fmt.Errorf("failed to read byte array at pointer %d with length %d", ptr, length)
 	}
 	return ByteArray(bytes), nil
 }
 
-func (t ByteArrayType) load(ctx *LiftLoadContext, offset uint32) (Value, error) {
-	ptr, ok := ctx.memory.ReadUint32Le(offset)
+func (t ByteArrayType) load(llc *LiftLoadContext, offset uint32) (Value, error) {
+	ptr, ok := llc.memory.ReadUint32Le(offset)
 	if !ok {
 		return nil, fmt.Errorf("failed to read list pointer at offset %d", offset)
 	}
-	length, ok := ctx.memory.ReadUint32Le(offset + 4)
+	length, ok := llc.memory.ReadUint32Le(offset + 4)
 	if !ok {
 		return nil, fmt.Errorf("failed to read list length at offset %d", offset+4)
 	}
-	bytes, ok := ctx.memory.Read(ptr, length)
+	bytes, ok := llc.memory.Read(ptr, length)
 	if !ok {
 		return nil, fmt.Errorf("failed to read byte array at pointer %d with length %d", ptr, length)
 	}
 	return ByteArray(bytes), nil
 }
 
-func (t ByteArrayType) lowerFlat(ctx *LiftLoadContext, val Value) ([]uint64, error) {
-	ptr := ctx.realloc(0, 0, 1, uint32(len(val.(ByteArray))))
-	ok := ctx.memory.Write(ptr, []byte(val.(ByteArray)))
+func (t ByteArrayType) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
+	ptr := llc.realloc(0, 0, 1, uint32(len(val.(ByteArray))))
+	ok := llc.memory.Write(ptr, []byte(val.(ByteArray)))
 	if !ok {
 		return nil, fmt.Errorf("failed to write byte array at pointer %d", ptr)
 	}
 	return []uint64{uint64(ptr), uint64(len(val.(ByteArray)))}, nil
 }
 
-func (t ByteArrayType) store(ctx *LiftLoadContext, offset uint32, val Value) error {
+func (t ByteArrayType) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	aryVal := val.(ByteArray)
-	ptr := ctx.realloc(0, 0, 1, uint32(len(aryVal)))
-	ok := ctx.memory.Write(ptr, []byte(aryVal))
+	ptr := llc.realloc(0, 0, 1, uint32(len(aryVal)))
+	ok := llc.memory.Write(ptr, []byte(aryVal))
 	if !ok {
 		return fmt.Errorf("failed to write byte array at pointer %d", ptr)
 	}
-	ok = ctx.memory.WriteUint32Le(offset, ptr)
+	ok = llc.memory.WriteUint32Le(offset, ptr)
 	if !ok {
 		return fmt.Errorf("failed to write byte array pointer at offset %d", offset)
 	}
-	ok = ctx.memory.WriteUint32Le(offset+4, uint32(len(aryVal)))
+	ok = llc.memory.WriteUint32Le(offset+4, uint32(len(aryVal)))
 	if !ok {
 		return fmt.Errorf("failed to write byte array length at offset %d", offset+4)
 	}

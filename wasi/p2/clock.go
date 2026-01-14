@@ -46,24 +46,18 @@ func CreateMonotonicClockInstance(
 	hi.MustAddFunction("resolution", func() componentmodel.U64 {
 		return componentmodel.U64(1)
 	})
-	hi.MustAddFunction("subscribe-instant", func(d componentmodel.U64) componentmodel.Own[Pollable] {
+	hi.MustAddFunction("subscribe-instant", func(d componentmodel.U64) host.Own[Pollable] {
 		target := time.Unix(0, int64(d))
 		delta := time.Until(target)
 		if delta <= 0 {
-			return componentmodel.Own[Pollable]{
-				Resource: AlwaysReadyPollable{},
-			}
+			return host.NewOwn[Pollable](AlwaysReadyPollable{})
 		}
 
-		return componentmodel.Own[Pollable]{
-			Resource: NewChanPollable(time.After(delta)),
-		}
+		return host.NewOwn[Pollable](NewChanPollable(time.After(delta)))
 	})
 
-	hi.MustAddFunction("subscribe-duration", func(d componentmodel.U64) componentmodel.Own[Pollable] {
-		return componentmodel.Own[Pollable]{
-			Resource: NewChanPollable(time.After(time.Duration(d))),
-		}
+	hi.MustAddFunction("subscribe-duration", func(d componentmodel.U64) host.Own[Pollable] {
+		return host.NewOwn[Pollable](NewChanPollable(time.After(time.Duration(d))))
 	})
 
 	return hi

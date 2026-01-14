@@ -42,6 +42,14 @@ func (Void) ValueType(inst *host.Instance) componentmodel.ValueType {
 	return nil
 }
 
+func (Void) ToHost(v componentmodel.Value) any {
+	return nil
+}
+
+func (Void) FromHost(v any) componentmodel.Value {
+	return nil
+}
+
 type Result[O, E any] host.Variant[Result[O, E]]
 
 func (Result[O, E]) ValueType(inst *host.Instance) componentmodel.ValueType {

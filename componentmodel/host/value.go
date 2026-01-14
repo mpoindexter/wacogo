@@ -6,102 +6,171 @@ import (
 	"github.com/partite-ai/wacogo/componentmodel"
 )
 
+type Convertable interface {
+	ToHost(componentmodel.Value) any
+	FromHost(any) componentmodel.Value
+}
+
+type callContext struct {
+	instance *Instance
+	cleanups []func()
+}
+
 type converter interface {
-	toHost(componentmodel.Value) any
-	fromHost(any) componentmodel.Value
-	modelType() reflect.Type
+	toHost(callCtx *callContext, v componentmodel.Value) any
+	fromHost(callCtx *callContext, v any) componentmodel.Value
 }
 
 type identityConverter struct {
-	modelTyp reflect.Type
 }
 
-func (ic identityConverter) toHost(v componentmodel.Value) any {
+func (ic identityConverter) toHost(cc *callContext, v componentmodel.Value) any {
 	return v
 }
 
-func (ic identityConverter) fromHost(v any) componentmodel.Value {
+func (ic identityConverter) fromHost(cc *callContext, v any) componentmodel.Value {
 	return v.(componentmodel.Value)
 }
 
-func (ic identityConverter) modelType() reflect.Type {
-	return ic.modelTyp
+type convertableConverter struct {
+	typ reflect.Type
+}
+
+func (c convertableConverter) toHost(cc *callContext, v componentmodel.Value) any {
+	return reflect.Zero(c.typ).Interface().(Convertable).ToHost(v)
+}
+
+func (c convertableConverter) fromHost(cc *callContext, v any) componentmodel.Value {
+	return v.(Convertable).FromHost(v)
+}
+
+type ownHandleConverter struct {
+	handleTyp    reflect.Type
+	resourceType reflect.Type
+}
+
+func (hc *ownHandleConverter) toHost(cc *callContext, v componentmodel.Value) any {
+	mv := v.(interface {
+		Move(*componentmodel.Instance) (componentmodel.ResourceHandle, error)
+	})
+	tgtHandle, err := mv.Move(cc.instance.instance)
+	if err != nil {
+		panic("failed to move resource handle during conversion to host")
+	}
+	inst := reflect.New(hc.handleTyp)
+	ownImplPtr := inst.Convert(reflect.TypeFor[*ownImpl]()).Interface().(*ownImpl)
+	ownImplPtr.data = &handleData{
+		lease: &handleLease{
+			handle: tgtHandle,
+		},
+	}
+	return inst.Elem().Interface()
+}
+
+func (hc *ownHandleConverter) fromHost(cc *callContext, v any) componentmodel.Value {
+	inst := reflect.ValueOf(v).Convert(reflect.TypeFor[ownImpl]()).Interface().(ownImpl)
+	inst.data.dropped = true
+	rt := cc.instance.resourceTypes[hc.resourceType]
+	return componentmodel.NewResourceHandle(cc.instance.instance, rt, inst.data.lease.resource())
+}
+
+type borrowHandleConverter struct {
+	handleTyp    reflect.Type
+	resourceType reflect.Type
+}
+
+func (hc *borrowHandleConverter) toHost(cc *callContext, v componentmodel.Value) any {
+	mv := v.(componentmodel.ResourceHandle)
+	inst := reflect.New(hc.handleTyp)
+	borrowImplPtr := inst.Convert(reflect.TypeFor[*borrowImpl]()).Interface().(*borrowImpl)
+	data := &handleData{
+		lease: &handleLease{
+			handle: mv,
+		},
+	}
+	borrowImplPtr.data = data
+	cc.cleanups = append(cc.cleanups, func() {
+		data.dropped = true
+		mv.Drop()
+	})
+	return inst.Elem().Interface()
+}
+
+func (hc *borrowHandleConverter) fromHost(cc *callContext, v any) componentmodel.Value {
+	inst := reflect.ValueOf(v).Convert(reflect.TypeFor[borrowImpl]()).Interface().(borrowImpl)
+	rt := cc.instance.resourceTypes[hc.resourceType]
+	h := componentmodel.NewBorrowedHandle(rt, inst.data.lease.resource(), func() {
+		inst.data.lease.release()
+	})
+	return h
 }
 
 type castConverter[M componentmodel.Value, H any] struct{}
 
-func (cc castConverter[M, H]) toHost(v componentmodel.Value) any {
+func (castConverter[M, H]) toHost(cc *callContext, v componentmodel.Value) any {
 	return reflect.ValueOf(v).Convert(reflect.TypeFor[H]()).Interface()
 }
 
-func (cc castConverter[M, H]) fromHost(v any) componentmodel.Value {
+func (castConverter[M, H]) fromHost(cc *callContext, v any) componentmodel.Value {
 	return reflect.ValueOf(v).Convert(reflect.TypeFor[M]()).Interface().(componentmodel.Value)
-}
-
-func (cc castConverter[M, H]) modelType() reflect.Type {
-	return reflect.TypeFor[M]()
 }
 
 type recordConverter struct {
 	typ reflect.Type
 }
 
-func (rc recordConverter) toHost(v componentmodel.Value) any {
+func (rc recordConverter) toHost(cc *callContext, v componentmodel.Value) any {
 	rec := v.(componentmodel.Record)
 	rv := reflect.New(rc.typ)
 	recordImplPtr := rv.Convert(reflect.TypeFor[*recordImpl]()).Interface().(*recordImpl)
-	recordImplPtr.data = &recordData{
+	recordImplPtr.data = &componentRecordAccessor{
 		record: rec,
+		cc:     cc,
 	}
 	return rv.Elem().Interface()
 }
 
-func (rc recordConverter) fromHost(v any) componentmodel.Value {
+func (rc recordConverter) fromHost(cc *callContext, v any) componentmodel.Value {
 	ri := reflect.ValueOf(v).Convert(reflect.TypeFor[recordImpl]()).Interface().(recordImpl)
 	if ri.data == nil {
 		return componentmodel.Record{}
 	}
-	return ri.data.record
-}
-
-func (rc recordConverter) modelType() reflect.Type {
-	return reflect.TypeFor[componentmodel.Record]()
+	return ri.data.toRecord(cc)
 }
 
 type variantConverter struct {
 	typ reflect.Type
 }
 
-func (vc variantConverter) toHost(v componentmodel.Value) any {
+func (vc variantConverter) toHost(cc *callContext, v componentmodel.Value) any {
 	variant := v.(*componentmodel.Variant)
 	rv := reflect.New(vc.typ)
 	variantImplPtr := rv.Convert(reflect.TypeFor[*variantImpl]()).Interface().(*variantImpl)
-	variantImplPtr.value = variant
+	variantImplPtr.value = &modelVariantAccessor{
+		variant: variant,
+		cc:      cc,
+	}
 	return rv.Elem().Interface()
 }
 
-func (vc variantConverter) fromHost(v any) componentmodel.Value {
+func (vc variantConverter) fromHost(cc *callContext, v any) componentmodel.Value {
 	rv := reflect.ValueOf(v)
 	t := rv.Convert(reflect.TypeFor[variantImpl]()).Interface().(variantImpl)
-	return t.value
-}
-
-func (vc variantConverter) modelType() reflect.Type {
-	return reflect.TypeFor[*componentmodel.Variant]()
+	return t.value.modelValue(cc)
 }
 
 type enumConverter struct {
 	typ reflect.Type
 }
 
-func (ec enumConverter) toHost(v componentmodel.Value) any {
+func (ec enumConverter) toHost(cc *callContext, v componentmodel.Value) any {
 	label := v.(*componentmodel.Variant).CaseLabel
 	rv := reflect.New(ec.typ).Elem()
 	rv.Set(reflect.ValueOf(label))
 	return rv.Interface()
 }
 
-func (ec enumConverter) fromHost(v any) componentmodel.Value {
+func (ec enumConverter) fromHost(cc *callContext, v any) componentmodel.Value {
 	rv := reflect.ValueOf(v)
 	t := rv.Convert(reflect.TypeFor[string]()).Interface().(string)
 	return &componentmodel.Variant{
@@ -109,28 +178,20 @@ func (ec enumConverter) fromHost(v any) componentmodel.Value {
 	}
 }
 
-func (ec enumConverter) modelType() reflect.Type {
-	return reflect.TypeFor[*componentmodel.Variant]()
-}
-
 type flagsetConverter struct {
 	typ reflect.Type
 }
 
-func (fc flagsetConverter) toHost(v componentmodel.Value) any {
+func (fc flagsetConverter) toHost(cc *callContext, v componentmodel.Value) any {
 	rv := reflect.New(fc.typ).Elem()
 	rv.Set(reflect.ValueOf(v).Convert(fc.typ))
 	return rv.Interface()
 }
 
-func (fc flagsetConverter) fromHost(v any) componentmodel.Value {
+func (fc flagsetConverter) fromHost(cc *callContext, v any) componentmodel.Value {
 	rv := reflect.ValueOf(v)
 	rv = rv.Convert(reflect.TypeFor[componentmodel.Flags]())
 	return rv.Interface().(componentmodel.Value)
-}
-
-func (fc flagsetConverter) modelType() reflect.Type {
-	return reflect.TypeFor[componentmodel.Flags]()
 }
 
 type listConverter struct {
@@ -138,32 +199,28 @@ type listConverter struct {
 	typ           reflect.Type
 }
 
-func (lc *listConverter) toHost(v componentmodel.Value) any {
+func (lc *listConverter) toHost(cc *callContext, v componentmodel.Value) any {
 	srv := reflect.ValueOf(v)
 	length := srv.Len()
 	trv := reflect.MakeSlice(lc.typ, length, length)
 	for i := range length {
 		elemValue := srv.Index(i)
-		hostElem := lc.elemConverter.toHost(elemValue.Interface().(componentmodel.Value))
+		hostElem := lc.elemConverter.toHost(cc, elemValue.Interface().(componentmodel.Value))
 		trv.Index(i).Set(reflect.ValueOf(hostElem))
 	}
 	return trv.Interface()
 }
 
-func (lc *listConverter) fromHost(v any) componentmodel.Value {
+func (lc *listConverter) fromHost(cc *callContext, v any) componentmodel.Value {
 	rv := reflect.ValueOf(v)
 	length := rv.Len()
 	srv := reflect.MakeSlice(reflect.TypeFor[componentmodel.List](), length, length)
 	for i := range length {
 		elemValue := rv.Index(i)
-		modelElem := lc.elemConverter.fromHost(elemValue.Interface())
+		modelElem := lc.elemConverter.fromHost(cc, elemValue.Interface())
 		srv.Index(i).Set(reflect.ValueOf(modelElem))
 	}
 	return srv.Interface().(componentmodel.Value)
-}
-
-func (lc listConverter) modelType() reflect.Type {
-	return reflect.TypeFor[componentmodel.List]()
 }
 
 func converterFor(t reflect.Type) converter {
@@ -178,14 +235,28 @@ func converterFor(t reflect.Type) converter {
 		return identityConverter{}
 	}
 
-	// Resource handles
-	type handleType interface {
-		ResourceType() reflect.Type
-		HandleValueType(t *componentmodel.ResourceType) componentmodel.ValueType
+	// Owned Resource Handle
+	if t.Implements(reflect.TypeFor[interface {
+		isOwnHandle()
+		resourceTyped
+	}]()) {
+		rt := reflect.Zero(t).Interface().(resourceTyped).resourceType()
+		return &ownHandleConverter{
+			handleTyp:    t,
+			resourceType: rt,
+		}
 	}
 
-	if t.Implements(reflect.TypeFor[handleType]()) {
-		return identityConverter{}
+	// Borrowed Resource Handle
+	if t.Implements(reflect.TypeFor[interface {
+		isBorrowHandle()
+		resourceTyped
+	}]()) {
+		rt := reflect.Zero(t).Interface().(resourceTyped).resourceType()
+		return &borrowHandleConverter{
+			handleTyp:    t,
+			resourceType: rt,
+		}
 	}
 
 	// Record
@@ -227,6 +298,12 @@ func converterFor(t reflect.Type) converter {
 				elemConverter: elemConverter,
 				typ:           t,
 			}
+		}
+	}
+
+	if t.ConvertibleTo(reflect.TypeFor[Convertable]()) {
+		return convertableConverter{
+			typ: t,
 		}
 	}
 

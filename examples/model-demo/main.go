@@ -8,10 +8,20 @@ import (
 	"os"
 
 	"github.com/partite-ai/wacogo/componentmodel"
+	"github.com/partite-ai/wacogo/componentmodel/host"
 	"github.com/partite-ai/wacogo/parser"
 	"github.com/partite-ai/wacogo/wasi/p2"
 	"github.com/tetratelabs/wazero"
 )
+
+type Person struct {
+	Name string
+}
+
+func (p *Person) Close() error {
+	fmt.Println("person closed")
+	return nil
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -64,6 +74,13 @@ func main() {
 		args[k] = v
 	}
 
+	personInstance := host.NewInstance()
+	personInstance.AddTypeExport("person", host.ResourceTypeFor[*Person](personInstance, personInstance))
+	personInstance.AddFunction("[method]person.get-name", func(self host.Borrow[*Person]) string {
+		return self.Resource().Name
+	})
+	args["example:gocomponent/people"] = personInstance.Instance()
+
 	compInst, err := modelComp.Instantiate(context.Background(), args)
 	if err != nil {
 		log.Fatalf("Failed to instantiate model: %v", err)
@@ -85,12 +102,12 @@ func main() {
 		log.Fatalf("'greet-all' is not a function")
 	}
 	fmt.Println(greetAllFuncTyped)
-	result := greetAllFuncTyped.Invoke(ctx, componentmodel.List{
+	result, err := greetAllFuncTyped.Invoke(ctx, componentmodel.List{
 		componentmodel.String("Alice"),
 		componentmodel.String("Bob"),
 		componentmodel.String("Charlie"),
 	})
-	fmt.Println("greet-all result:", result)
+	fmt.Println("greet-all result:", result, err)
 
 	greetFunc, ok := greetComp.(*componentmodel.Instance).Export("greeting")
 	if !ok {
@@ -102,6 +119,21 @@ func main() {
 		log.Fatalf("'greet' is not a function")
 	}
 	fmt.Println(greetFuncTyped)
-	result = greetFuncTyped.Invoke(ctx, componentmodel.String("Diana"))
-	fmt.Println("greet result:", result)
+	result, err = greetFuncTyped.Invoke(ctx, componentmodel.String("Diana"))
+	fmt.Println("greet result:", result, err)
+
+	greetPersonFunc, ok := greetComp.(*componentmodel.Instance).Export("greet-person")
+	if !ok {
+		log.Fatalf("Export 'greet-person' not found in greet component")
+	}
+
+	greetPersonFuncTyped, ok := greetPersonFunc.(*componentmodel.Function)
+	if !ok {
+		log.Fatalf("'greet-person' is not a function")
+	}
+	fmt.Println(greetPersonFuncTyped)
+
+	personResource := componentmodel.NewResourceHandle(compInst, host.ResourceTypeFor[*Person](personInstance, personInstance), &Person{Name: "Eve"})
+	result, err = greetPersonFuncTyped.Invoke(ctx, personResource)
+	fmt.Println("greet-person result:", result, err)
 }

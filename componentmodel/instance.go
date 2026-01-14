@@ -8,8 +8,18 @@ import (
 )
 
 type Instance struct {
-	exports map[string]any
-	tables  tables
+	exports        map[string]any
+	active         bool
+	currentContext context.Context
+	loweredHandles *table[ResourceHandle]
+	borrowCount    uint32
+}
+
+func newInstance() *Instance {
+	return &Instance{
+		exports:        make(map[string]any),
+		loweredHandles: newTable[ResourceHandle](),
+	}
 }
 
 func (i *Instance) Export(name string) (any, bool) {
@@ -17,17 +27,31 @@ func (i *Instance) Export(name string) (any, bool) {
 	return val, ok
 }
 
-func newInstance() *Instance {
-	return &Instance{
-		exports: make(map[string]any),
-		tables:  newTables(),
+func (i *Instance) enter(ctx context.Context) error {
+	if i.active {
+		return fmt.Errorf("instance is already active")
 	}
+	i.active = true
+	i.currentContext = ctx
+	return nil
+}
+
+func (i *Instance) exit() error {
+	if !i.active {
+		panic("instance is not active")
+	}
+	if i.borrowCount > 0 {
+		return fmt.Errorf("cannot exit instance: there are still borrowed handles")
+	}
+	i.currentContext = nil
+	i.active = false
+	return nil
 }
 
 func NewInstanceOf(exports map[string]any) *Instance {
 	return &Instance{
-		exports: exports,
-		tables:  newTables(),
+		exports:        exports,
+		loweredHandles: newTable[ResourceHandle](),
 	}
 }
 

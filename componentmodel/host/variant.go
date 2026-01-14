@@ -7,11 +7,54 @@ import (
 )
 
 type Variant[T VariantImpl] struct {
-	value *componentmodel.Variant
+	value variantAccessor
 }
 
 type variantImpl struct {
-	value *componentmodel.Variant
+	value variantAccessor
+}
+
+type variantAccessor interface {
+	hostValue() (string, func(converter converter) any)
+	modelValue(cc *callContext) componentmodel.Value
+}
+
+type hostVariantAccessor struct {
+	label     string
+	value     any
+	converter converter
+}
+
+func (hva *hostVariantAccessor) hostValue() (string, func(converter converter) any) {
+	return hva.label, func(converter converter) any { return hva.value }
+}
+
+func (hva *hostVariantAccessor) modelValue(cc *callContext) componentmodel.Value {
+	if hva.value == nil {
+		return &componentmodel.Variant{
+			CaseLabel: hva.label,
+			Value:     nil,
+		}
+	}
+	return &componentmodel.Variant{
+		CaseLabel: hva.label,
+		Value:     hva.converter.fromHost(cc, hva.value),
+	}
+}
+
+type modelVariantAccessor struct {
+	cc      *callContext
+	variant *componentmodel.Variant
+}
+
+func (mva *modelVariantAccessor) hostValue() (string, func(converter converter) any) {
+	return mva.variant.CaseLabel, func(converter converter) any {
+		return converter.toHost(mva.cc, mva.variant.Value)
+	}
+}
+
+func (mva *modelVariantAccessor) modelValue(cc *callContext) componentmodel.Value {
+	return mva.variant
 }
 
 func VariantType(
@@ -36,7 +79,7 @@ type VariantCaseDef struct {
 }
 
 type VariantImpl interface {
-	~struct{ value *componentmodel.Variant }
+	~struct{ value variantAccessor }
 	ValueTyped
 }
 
@@ -46,8 +89,8 @@ func VariantCase[
 ](
 	constr C,
 ) *VariantCaseDef {
-	v := (struct{ value *componentmodel.Variant })(constr())
-	caseLabel := v.value.CaseLabel
+	v := (struct{ value variantAccessor })(constr())
+	caseLabel, _ := v.value.hostValue()
 	return &VariantCaseDef{
 		caseLabel: caseLabel,
 		valueType: func(hi *Instance) componentmodel.ValueType {
@@ -64,8 +107,8 @@ func VariantCaseValue[
 	constr C,
 ) *VariantCaseDef {
 	var empty T
-	v := (struct{ value *componentmodel.Variant })(constr(empty))
-	caseLabel := v.value.CaseLabel
+	v := (struct{ value variantAccessor })(constr(empty))
+	caseLabel, _ := v.value.hostValue()
 	return &VariantCaseDef{
 		caseLabel: caseLabel,
 		valueType: func(hi *Instance) componentmodel.ValueType {
@@ -83,9 +126,10 @@ func VariantConstructValue[
 ) V {
 	converter := converterFor(reflect.TypeFor[T]())
 	vx := Variant[V]{
-		value: &componentmodel.Variant{
-			CaseLabel: caseLabel,
-			Value:     converter.fromHost(value),
+		value: &hostVariantAccessor{
+			label:     caseLabel,
+			value:     value,
+			converter: converter,
 		},
 	}
 	return (V)(vx)
@@ -97,8 +141,9 @@ func VariantConstruct[
 	caseLabel string,
 ) V {
 	vx := Variant[V]{
-		value: &componentmodel.Variant{
-			CaseLabel: caseLabel,
+		value: &hostVariantAccessor{
+			label: caseLabel,
+			value: nil,
 		},
 	}
 	return (V)(vx)
@@ -109,17 +154,19 @@ func VariantCast[
 	V VariantImpl,
 ](
 	v V,
-	caseLabel string,
+	caseLabelPredicate string,
 ) (T, bool) {
-	vv := (struct{ value *componentmodel.Variant })(v)
+	vv := (struct{ value variantAccessor })(v)
 
-	if vv.value.CaseLabel != caseLabel {
+	converter := converterFor(reflect.TypeFor[T]())
+	caseLabel, getValue := vv.value.hostValue()
+
+	if caseLabel != caseLabelPredicate {
 		var zero T
 		return zero, false
 	}
 
-	converter := converterFor(reflect.TypeFor[T]())
-	return converter.toHost(vv.value.Value).(T), true
+	return getValue(converter).(T), true
 }
 
 func VariantTest[
@@ -128,6 +175,7 @@ func VariantTest[
 	v V,
 	caseLabel string,
 ) bool {
-	vv := (struct{ value *componentmodel.Variant })(v)
-	return vv.value.CaseLabel == caseLabel
+	vv := (struct{ value variantAccessor })(v)
+	label, _ := vv.value.hostValue()
+	return label == caseLabel
 }

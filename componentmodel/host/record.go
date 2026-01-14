@@ -8,21 +8,69 @@ import (
 )
 
 type Record[R RecordImpl] struct {
-	data *recordData
+	data recordAccessor
 }
 
-type recordData struct {
-	record          componentmodel.Record
-	typeConstructor func(inst *Instance) (*componentmodel.RecordType, error)
+type recordAccessor interface {
+	getField(index int) any
+	toRecord(*callContext) componentmodel.Record
+}
+
+type hostRecordAccessor struct {
+	values []*RecordFieldValue
+}
+
+func (hra *hostRecordAccessor) getField(index int) any {
+	return hra.values[index]
+}
+
+func (hra *hostRecordAccessor) toRecord(cc *callContext) componentmodel.Record {
+	fieldValues := make([]componentmodel.Value, len(hra.values))
+	for i, v := range hra.values {
+		fieldValues[i] = v.converter.fromHost(cc, v.value)
+	}
+	return componentmodel.NewRecord(fieldValues...)
+}
+
+func (hra *hostRecordAccessor) constructType(inst *Instance) (*componentmodel.RecordType, error) {
+	t := make([]*componentmodel.RecordField, len(hra.values))
+	for i, f := range hra.values {
+		if f.err != nil {
+			return nil, f.err
+		}
+		t[i] = &componentmodel.RecordField{
+			Name: f.fieldName,
+			Type: f.fieldType(inst),
+		}
+	}
+	return &componentmodel.RecordType{
+		Fields: t,
+	}, nil
+}
+
+type componentRecordAccessor struct {
+	cc     *callContext
+	record componentmodel.Record
+}
+
+func (cra *componentRecordAccessor) getField(index int) any {
+	mv := cra.record.Field(index)
+	converter := converterFor(reflect.TypeOf(mv))
+	value := converter.toHost(cra.cc, mv)
+	return value
+}
+
+func (cra *componentRecordAccessor) toRecord(cc *callContext) componentmodel.Record {
+	return cra.record
 }
 
 type recordImpl struct {
-	data *recordData
+	data recordAccessor
 }
 
 type RecordImpl interface {
 	~struct {
-		data *recordData
+		data recordAccessor
 	}
 	ValueTyped
 }
@@ -53,7 +101,7 @@ func RecordType[
 	if !ok {
 		panic("RecordType constructor returned wrong type")
 	}
-	rec, err := (Record[R])(ri).data.typeConstructor(hi)
+	rec, err := (Record[R])(ri).data.(*hostRecordAccessor).constructType(hi)
 	if err != nil {
 		panic(fmt.Sprintf("RecordType: %v", err))
 	}
@@ -63,7 +111,8 @@ func RecordType[
 type RecordFieldValue struct {
 	fieldName string
 	fieldType func(hi *Instance) componentmodel.ValueType
-	value     componentmodel.Value
+	value     any
+	converter converter
 	err       error
 }
 
@@ -76,52 +125,31 @@ func RecordField[
 			err: fmt.Errorf("RecordField: unsupported field type %T for field %s", value, name),
 		}
 	}
-	mv := converter.fromHost(value)
 	return &RecordFieldValue{
 		fieldName: name,
 		fieldType: func(hi *Instance) componentmodel.ValueType {
 			return ValueTypeFor[T](hi)
 		},
-		value: mv,
+		value:     value,
+		converter: converter,
 	}
 }
 
 func RecordConstruct[
 	R RecordImpl,
 ](fields ...*RecordFieldValue) R {
-	fieldValues := make([]componentmodel.Value, len(fields))
-	for i, f := range fields {
-		fieldValues[i] = f.value
-	}
 
 	return R{
-		data: &recordData{
-			record: componentmodel.NewRecord(fieldValues...),
-			typeConstructor: func(inst *Instance) (*componentmodel.RecordType, error) {
-				t := make([]*componentmodel.RecordField, len(fields))
-				for i, f := range fields {
-					if f.err != nil {
-						return nil, f.err
-					}
-					t[i] = &componentmodel.RecordField{
-						Name: f.fieldName,
-						Type: f.fieldType(inst),
-					}
-				}
-				return &componentmodel.RecordType{
-					Fields: t,
-				}, nil
-			},
+		data: &hostRecordAccessor{
+			values: fields,
 		},
 	}
+
 }
 
 func RecordFieldGetIndex[
 	T any,
 	R RecordImpl,
 ](r R, index int) T {
-	record := (Record[R])(r).data.record
-	converter := converterFor(reflect.TypeFor[T]())
-	v := record.Field(index)
-	return converter.toHost(v).(T)
+	return (Record[R])(r).data.getField(index).(T)
 }
