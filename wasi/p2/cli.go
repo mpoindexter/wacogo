@@ -50,7 +50,7 @@ func CreateStdoutInstance(
 
 	hi.AddTypeExport("output-stream", host.ResourceTypeFor[OutputStream](hi, streamsInstance))
 	hi.MustAddFunction("get-stdout", func() host.Own[OutputStream] {
-		return host.NewOwn(OutputStream{w: w})
+		return host.NewOwn(OutputStream(NewWriterOutputStream(w)))
 	})
 	return hi
 }
@@ -63,7 +63,7 @@ func CreateStderrInstance(
 	hi.AddTypeExport("output-stream", host.ResourceTypeFor[OutputStream](hi, streamsInstance))
 
 	hi.MustAddFunction("get-stderr", func() host.Own[OutputStream] {
-		return host.NewOwn(OutputStream{w: w})
+		return host.NewOwn(OutputStream(NewWriterOutputStream(w)))
 	})
 	return hi
 }
@@ -76,7 +76,7 @@ func CreateStdinInstance(
 	hi.AddTypeExport("input-stream", host.ResourceTypeFor[InputStream](hi, streamsInstance))
 
 	hi.MustAddFunction("get-stdin", func() host.Own[InputStream] {
-		return host.NewOwn(InputStream{r: in})
+		return host.NewOwn[InputStream](NewReaderInputStream(in, 32768, 1024, 32))
 	})
 
 	return hi

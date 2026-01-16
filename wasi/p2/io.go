@@ -1,6 +1,7 @@
 package p2
 
 import (
+	"errors"
 	"io"
 
 	"github.com/partite-ai/wacogo/componentmodel"
@@ -44,67 +45,6 @@ func (p ChanPollable[T]) block() {
 func NewChanPollable[T any](ch <-chan T) ChanPollable[T] {
 	return ChanPollable[T]{
 		C: ch,
-	}
-}
-
-type OutputStream struct {
-	w io.Writer
-}
-
-func (OutputStream) Resource() {}
-
-func (s OutputStream) write(contents componentmodel.ByteArray) Result[Void, StreamError] {
-	_, err := s.w.Write([]byte(contents))
-	if err != nil {
-		return ResultErr[Void](
-			StreamErrorLastOperationFailed(
-				host.NewOwn(IOError{DebugString: err.Error()}),
-			),
-		)
-	}
-	return ResultOk[StreamError](Void{})
-}
-
-func (s OutputStream) close() {
-	if closer, ok := s.w.(io.Closer); ok {
-		closer.Close()
-	}
-}
-
-type InputStream struct {
-	r io.Reader
-}
-
-func (InputStream) Resource() {}
-
-func (s InputStream) read(n uint64) Result[componentmodel.ByteArray, StreamError] {
-	buf := make([]byte, n)
-	bytesRead, err := s.r.Read(buf)
-	if err != nil {
-		return ResultErr[componentmodel.ByteArray](
-			StreamErrorLastOperationFailed(
-				host.NewOwn(IOError{DebugString: err.Error()}),
-			),
-		)
-	}
-	return ResultOk[StreamError](componentmodel.ByteArray(buf[:bytesRead]))
-}
-
-func (s InputStream) skip(n uint64) Result[componentmodel.U64, StreamError] {
-	bytesRead, err := io.CopyN(io.Discard, s.r, int64(n))
-	if err != nil {
-		return ResultErr[componentmodel.U64](
-			StreamErrorLastOperationFailed(
-				host.NewOwn(IOError{DebugString: err.Error()}),
-			),
-		)
-	}
-	return ResultOk[StreamError](componentmodel.U64(uint64(bytesRead)))
-}
-
-func (s InputStream) close() {
-	if closer, ok := s.r.(io.Closer); ok {
-		closer.Close()
 	}
 }
 
@@ -171,6 +111,36 @@ func CreatePollInstance() *host.Instance {
 	return hi
 }
 
+func toByteArray(data []byte, err error) (componentmodel.ByteArray, error) {
+	if err != nil {
+		return componentmodel.ByteArray{}, err
+	}
+	return componentmodel.ByteArray(data), nil
+}
+
+func toU64(n uint64, err error) (componentmodel.U64, error) {
+	if err != nil {
+		return 0, err
+	}
+	return componentmodel.U64(n), nil
+}
+
+func translateIOResponse[T any](data T, err error) Result[T, StreamError] {
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return ResultErr[T](
+				StreamErrorClosed(),
+			)
+		}
+		return ResultErr[T](
+			StreamErrorLastOperationFailed(
+				host.NewOwn[IOError](IOError{DebugString: err.Error()}),
+			),
+		)
+	}
+	return ResultOk[StreamError](data)
+}
+
 func CreateStreamsInstance(
 	errorInstance *host.Instance,
 	pollInstance *host.Instance,
@@ -184,77 +154,69 @@ func CreateStreamsInstance(
 	hi.AddTypeExport("stream-error", host.ValueTypeFor[StreamError](hi))
 
 	hi.AddFunction("[method]input-stream.read", func(self host.Borrow[InputStream], len componentmodel.U64) Result[componentmodel.ByteArray, StreamError] {
-		return self.Resource().read(uint64(len))
+		return translateIOResponse(toByteArray(self.Resource().Read(uint64(len))))
 	})
 	hi.AddFunction("[method]input-stream.blocking-read", func(self host.Borrow[InputStream], len componentmodel.U64) Result[componentmodel.ByteArray, StreamError] {
-		return self.Resource().read(uint64(len))
+		return translateIOResponse(toByteArray(self.Resource().BlockingRead(uint64(len))))
 	})
 	hi.AddFunction("[method]input-stream.skip", func(self host.Borrow[InputStream], n componentmodel.U64) Result[componentmodel.U64, StreamError] {
-		return self.Resource().skip(uint64(n))
+		return translateIOResponse(toU64(self.Resource().Skip(uint64(n))))
 	})
 	hi.AddFunction("[method]input-stream.blocking-skip", func(self host.Borrow[InputStream], n componentmodel.U64) Result[componentmodel.U64, StreamError] {
-		return self.Resource().skip(uint64(n))
+		return translateIOResponse(toU64(self.Resource().BlockingSkip(uint64(n))))
 	})
 	hi.AddFunction("[method]input-stream.subscribe", func(self host.Borrow[InputStream]) host.Own[Pollable] {
-		return host.NewOwn[Pollable](AlwaysReadyPollable{})
+		ch := make(chan struct{})
+		p := NewChanPollable(ch)
+		self.Resource().Subscribe(func() {
+			close(ch)
+		})
+		return host.NewOwn[Pollable](p)
 	})
 
 	hi.AddFunction("[method]output-stream.check-write", func(self host.Borrow[OutputStream]) Result[componentmodel.U64, StreamError] {
-		return ResultOk[StreamError](componentmodel.U64(4096))
+		return translateIOResponse(toU64(self.Resource().CheckWrite()))
 	})
 
 	hi.AddFunction("[method]output-stream.write", func(self host.Borrow[OutputStream], contents componentmodel.ByteArray) Result[Void, StreamError] {
-		return self.Resource().write(contents)
+		return translateIOResponse(Void{}, self.Resource().Write(contents))
 	})
 
 	hi.AddFunction("[method]output-stream.blocking-write-and-flush", func(self host.Borrow[OutputStream], contents componentmodel.ByteArray) Result[Void, StreamError] {
-		return self.Resource().write(contents)
+		return translateIOResponse(Void{}, self.Resource().BlockingWriteAndFlush(contents))
 	})
 
 	hi.AddFunction("[method]output-stream.flush", func(self host.Borrow[OutputStream]) Result[Void, StreamError] {
-		return ResultOk[StreamError](Void{})
+		return translateIOResponse(Void{}, self.Resource().Flush())
 	})
 
 	hi.AddFunction("[method]output-stream.blocking-flush", func(self host.Borrow[OutputStream]) Result[Void, StreamError] {
-		return ResultOk[StreamError](Void{})
+		return translateIOResponse(Void{}, self.Resource().BlockingFlush())
 	})
 
 	hi.AddFunction("[method]output-stream.subscribe", func(self host.Borrow[OutputStream]) host.Own[Pollable] {
-		return host.NewOwn[Pollable](AlwaysReadyPollable{})
+		ch := make(chan struct{})
+		p := NewChanPollable(ch)
+		self.Resource().Subscribe(func() {
+			close(ch)
+		})
+		return host.NewOwn[Pollable](p)
 	})
 
 	hi.AddFunction("[method]output-stream.write-zeroes", func(self host.Borrow[OutputStream], n componentmodel.U64) Result[Void, StreamError] {
-		zeroes := make(componentmodel.ByteArray, n)
-		return self.Resource().write(zeroes)
+		return translateIOResponse(Void{}, self.Resource().WriteZeroes(uint64(n)))
 	})
 
 	hi.AddFunction("[method]output-stream.blocking-write-zeroes-and-flush", func(self host.Borrow[OutputStream], n componentmodel.U64) Result[Void, StreamError] {
-		zeroes := make(componentmodel.ByteArray, n)
-		return self.Resource().write(zeroes)
+		return translateIOResponse(Void{}, self.Resource().BlockingWriteZeroesAndFlush(uint64(n)))
 	})
 
 	hi.AddFunction("[method]output-stream.splice", func(self host.Borrow[OutputStream], src host.Borrow[InputStream], n componentmodel.U64) Result[componentmodel.U64, StreamError] {
-		copied, err := io.CopyN(self.Resource().w, src.Resource().r, int64(n))
-		if err != nil {
-			return ResultErr[componentmodel.U64](
-				StreamErrorLastOperationFailed(
-					host.NewOwn[IOError](IOError{DebugString: err.Error()}),
-				),
-			)
-		}
-		return ResultOk[StreamError](componentmodel.U64(uint64(copied)))
+		return translateIOResponse(toU64(self.Resource().Splice(src.Resource(), uint64(n))))
 	})
 
 	hi.AddFunction("[method]output-stream.blocking-splice", func(self host.Borrow[OutputStream], src host.Borrow[InputStream], n componentmodel.U64) Result[componentmodel.U64, StreamError] {
-		copied, err := io.CopyN(self.Resource().w, src.Resource().r, int64(n))
-		if err != nil {
-			return ResultErr[componentmodel.U64](
-				StreamErrorLastOperationFailed(
-					host.NewOwn[IOError](IOError{DebugString: err.Error()}),
-				),
-			)
-		}
-		return ResultOk[StreamError](componentmodel.U64(uint64(copied)))
+		return translateIOResponse(toU64(self.Resource().BlockingSplice(src.Resource(), uint64(n))))
 	})
 
 	return hi
