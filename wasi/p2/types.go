@@ -10,8 +10,8 @@ type Option[T any] host.Variant[Option[T]]
 func (Option[T]) ValueType(inst *host.Instance) componentmodel.ValueType {
 	return host.VariantType(
 		inst,
-		host.VariantCaseValue(OptionSome[T]),
 		host.VariantCase[Option[T]](OptionNone),
+		host.VariantCaseValue(OptionSome[T]),
 	)
 }
 
@@ -73,13 +73,13 @@ func (v Result[O, E]) Ok() (O, bool) {
 
 func ResultErr[O, E any](err E) Result[O, E] {
 	return host.VariantConstructValue[Result[O, E]](
-		"err",
+		"error",
 		err,
 	)
 }
 
 func (v Result[O, E]) Err() (E, bool) {
-	return host.VariantCast[E](v, "err")
+	return host.VariantCast[E](v, "error")
 }
 
 type Tuple2[A, B any] host.Record[Tuple2[A, B]]

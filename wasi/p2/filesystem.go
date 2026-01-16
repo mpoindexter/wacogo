@@ -144,20 +144,20 @@ func (v NewTimestamp) Timestamp() (componentmodel.U64, bool) {
 type DescriptorStat host.Record[DescriptorStat]
 
 func NewDescriptorStat(
-	Type DescriptorType,
-	LinkCount LinkCount,
-	Size Filesize,
-	DataAccessTimestamp DateTime,
-	DataModificationTimestamp DateTime,
-	StatusChangeTimestamp DateTime,
+	typ DescriptorType,
+	linkCount LinkCount,
+	size Filesize,
+	dataAccessTimestamp Option[DateTime],
+	dataModificationTimestamp Option[DateTime],
+	statusChangeTimestamp Option[DateTime],
 ) DescriptorStat {
 	return host.RecordConstruct[DescriptorStat](
-		host.RecordField("type", Type),
-		host.RecordField("link-count", LinkCount),
-		host.RecordField("size", Size),
-		host.RecordField("data-access-timestamp", DataAccessTimestamp),
-		host.RecordField("data-modification-timestamp", DataModificationTimestamp),
-		host.RecordField("status-change-timestamp", StatusChangeTimestamp),
+		host.RecordField("type", typ),
+		host.RecordField("link-count", linkCount),
+		host.RecordField("size", size),
+		host.RecordField("data-access-timestamp", dataAccessTimestamp),
+		host.RecordField("data-modification-timestamp", dataModificationTimestamp),
+		host.RecordField("status-change-timestamp", statusChangeTimestamp),
 	)
 }
 
@@ -255,6 +255,7 @@ func CreateFilesystemTypesInstance(
 	hi.AddTypeExport("descriptor-flags", host.ValueTypeFor[DescriptorFlags](hi))
 	hi.AddTypeExport("link-count", host.ValueTypeFor[LinkCount](hi))
 	hi.AddTypeExport("descriptor-stat", host.ValueTypeFor[DescriptorStat](hi))
+	hi.AddTypeExport("descriptor-type", host.ValueTypeFor[DescriptorType](hi))
 	hi.AddTypeExport("path-flags", host.ValueTypeFor[PathFlags](hi))
 	hi.AddTypeExport("open-flags", host.ValueTypeFor[OpenFlags](hi))
 	hi.AddTypeExport("new-timestamp", host.ValueTypeFor[NewTimestamp](hi))

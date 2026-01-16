@@ -113,8 +113,8 @@ type StreamError host.Variant[StreamError]
 func (StreamError) ValueType(inst *host.Instance) componentmodel.ValueType {
 	return host.VariantType(
 		inst,
-		host.VariantCase[StreamError](StreamErrorClosed),
 		host.VariantCaseValue(StreamErrorLastOperationFailed),
+		host.VariantCase[StreamError](StreamErrorClosed),
 	)
 }
 

@@ -1274,6 +1274,10 @@ func NewResourceType(instance *Instance, repType reflect.Type, destructor func(c
 }
 
 func (t *ResourceType) equalsType(other Type) bool {
+	if t == anyResourceType {
+		_, ok := other.(*ResourceType)
+		return ok
+	}
 	return t == other
 }
 

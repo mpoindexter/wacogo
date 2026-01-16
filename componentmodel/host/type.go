@@ -21,39 +21,46 @@ func ValueTypeFor[T any](inst *Instance) componentmodel.ValueType {
 }
 
 func valueTypeFor(inst *Instance, t reflect.Type) (componentmodel.ValueType, bool) {
+
+	// Enum type - check this first as enums are convertible to string
+	if t.ConvertibleTo(reflect.TypeFor[string]()) && t.Implements(reflect.TypeFor[EnumValueProvider]()) {
+		enumValues := reflect.Zero(t).Interface().(EnumValueProvider).EnumValues()
+		return componentmodel.EnumType(enumValues...), true
+	}
+
 	switch t.Kind() {
 	case reflect.Bool:
-		return &componentmodel.BoolType{}, true
+		return componentmodel.BoolType{}, true
 	case reflect.Uint8:
-		return &componentmodel.U8Type{}, true
+		return componentmodel.U8Type{}, true
 	case reflect.Uint16:
-		return &componentmodel.U16Type{}, true
+		return componentmodel.U16Type{}, true
 	case reflect.Uint32:
-		return &componentmodel.U32Type{}, true
+		return componentmodel.U32Type{}, true
 	case reflect.Uint64:
-		return &componentmodel.U64Type{}, true
+		return componentmodel.U64Type{}, true
 	case reflect.Int8:
-		return &componentmodel.S8Type{}, true
+		return componentmodel.S8Type{}, true
 	case reflect.Int16:
-		return &componentmodel.S16Type{}, true
+		return componentmodel.S16Type{}, true
 	case reflect.Int32:
-		return &componentmodel.S32Type{}, true
+		return componentmodel.S32Type{}, true
 	case reflect.Int64:
-		return &componentmodel.S64Type{}, true
+		return componentmodel.S64Type{}, true
 	case reflect.Float32:
-		return &componentmodel.F32Type{}, true
+		return componentmodel.F32Type{}, true
 	case reflect.Float64:
-		return &componentmodel.F64Type{}, true
+		return componentmodel.F64Type{}, true
 	case reflect.String:
-		return &componentmodel.StringType{}, true
+		return componentmodel.StringType{}, true
 	}
 
 	if t.AssignableTo(reflect.TypeFor[componentmodel.Char]()) {
-		return &componentmodel.CharType{}, true
+		return componentmodel.CharType{}, true
 	}
 
 	if t.AssignableTo(reflect.TypeFor[componentmodel.ByteArray]()) {
-		return &componentmodel.ByteArrayType{}, true
+		return componentmodel.ByteArrayType{}, true
 	}
 
 	// Resource Handle
@@ -76,12 +83,6 @@ func valueTypeFor(inst *Instance, t reflect.Type) (componentmodel.ValueType, boo
 		hvt := reflect.Zero(t).Interface().(ValueTyped)
 		vt := hvt.ValueType(inst)
 		return vt, true
-	}
-
-	// Enum type
-	if t.ConvertibleTo(reflect.TypeFor[string]()) && t.Implements(reflect.TypeFor[EnumValueProvider]()) {
-		enumValues := reflect.Zero(t).Interface().(EnumValueProvider).EnumValues()
-		return componentmodel.EnumType(enumValues...), true
 	}
 
 	// Flags type

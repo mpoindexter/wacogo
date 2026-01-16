@@ -158,6 +158,11 @@ func (b *Builder) buildInstance(comp *Component, astInst *ast.Instance) error {
 }
 
 func (b *Builder) buildAlias(comp *Component, astAlias *ast.Alias) error {
+	// Validate alias before building
+	if err := validateAlias(&comp.scope, astAlias); err != nil {
+		return err
+	}
+
 	switch target := astAlias.Target.(type) {
 	case *ast.CoreExportAlias:
 		return b.buildCoreExportAlias(comp, astAlias.Sort, target)
@@ -284,40 +289,80 @@ func (b *Builder) buildType(comp *Component, astType *ast.Type) error {
 }
 
 func (b *Builder) buildImport(comp *Component, astImport *ast.Import) error {
+	// Validate import
+	if err := validateImport(&comp.scope, astImport); err != nil {
+		return err
+	}
+
 	switch desc := astImport.Desc.(type) {
 	case *ast.SortExternDesc:
 		switch desc.Sort {
 		case ast.SortCoreModule:
+			typ := comp.scope.coreTypes[desc.TypeIdx]
 			comp.scope.coreModules = append(comp.scope.coreModules, &coreModuleImportDefinition{
-				name: astImport.ImportName,
+				name:            astImport.ImportName,
+				expectedTypeDef: typ,
 			})
 			return nil
 		case ast.SortFunc:
+			typ := comp.scope.componentModelTypes[desc.TypeIdx]
 			comp.scope.functions = append(comp.scope.functions, &functionImportDefinition{
-				name: astImport.ImportName,
+				name:            astImport.ImportName,
+				expectedTypeDef: typ,
 			})
 			return nil
 		case ast.SortType:
+			typDef := comp.scope.componentModelTypes[desc.TypeIdx]
 			comp.scope.componentModelTypes = append(comp.scope.componentModelTypes, &typeImportDefinition{
 				name: astImport.ImportName,
+				typeBoundCreator: func(ctx context.Context, scope instanceScope) (bound, error) {
+					typ, err := typDef.resolveType(ctx, scope)
+					if err != nil {
+						return nil, err
+					}
+					return eqBound{typ: typ}, nil
+				},
 			})
 			return nil
 		case ast.SortComponent:
+			typ := comp.scope.componentModelTypes[desc.TypeIdx]
 			comp.scope.components = append(comp.scope.components, &componentImportDefinition{
-				name: astImport.ImportName,
+				name:            astImport.ImportName,
+				expectedTypeDef: typ,
 			})
 			return nil
 		case ast.SortInstance:
+			typ := comp.scope.componentModelTypes[desc.TypeIdx]
 			comp.scope.instances = append(comp.scope.instances, &instanceImportDefinition{
-				name: astImport.ImportName,
+				name:            astImport.ImportName,
+				expectedTypeDef: typ,
 			})
 			return nil
 		default:
 			return fmt.Errorf("unsupported import sort: %v", desc.Sort)
 		}
 	case *ast.TypeExternDesc:
+		var typeBoundCreator func(ctx context.Context, scope instanceScope) (bound, error)
+		switch b := desc.Bound.(type) {
+		case *ast.EqBound:
+			typDef := comp.scope.componentModelTypes[b.TypeIdx]
+			typeBoundCreator = func(ctx context.Context, scope instanceScope) (bound, error) {
+				typ, err := typDef.resolveType(ctx, scope)
+				if err != nil {
+					return nil, err
+				}
+				return eqBound{typ: typ}, nil
+			}
+		case *ast.SubResourceBound:
+			typeBoundCreator = func(ctx context.Context, scope instanceScope) (bound, error) {
+				return subResourceBound{}, nil
+			}
+		default:
+			return fmt.Errorf("unsupported type bound in type import: %T", b)
+		}
 		comp.scope.componentModelTypes = append(comp.scope.componentModelTypes, &typeImportDefinition{
-			name: astImport.ImportName,
+			name:             astImport.ImportName,
+			typeBoundCreator: typeBoundCreator,
 		})
 		return nil
 	default:
@@ -326,6 +371,11 @@ func (b *Builder) buildImport(comp *Component, astImport *ast.Import) error {
 }
 
 func (b *Builder) buildExport(comp *Component, astExport *ast.Export) error {
+	// Validate export
+	if err := validateExport(&comp.scope, astExport); err != nil {
+		return err
+	}
+
 	switch astExport.SortIdx.Sort {
 	case ast.SortCoreModule:
 		def, err := comp.scope.resolveCoreModuleDefinition(0, astExport.SortIdx.Idx)
@@ -376,6 +426,10 @@ func (b *Builder) buildExport(comp *Component, astExport *ast.Export) error {
 func (b *Builder) buildCanon(comp *Component, astCanon *ast.Canon) error {
 	switch def := astCanon.Def.(type) {
 	case *ast.CanonLift:
+		// Validate canon lift
+		if err := validateCanonLift(&comp.scope, def); err != nil {
+			return err
+		}
 		fnDef, err := canonLift(comp, def)
 		if err != nil {
 			return err
@@ -383,6 +437,10 @@ func (b *Builder) buildCanon(comp *Component, astCanon *ast.Canon) error {
 		comp.scope.functions = append(comp.scope.functions, fnDef)
 		return nil
 	case *ast.CanonLower:
+		// Validate canon lower
+		if err := validateCanonLower(&comp.scope, def); err != nil {
+			return err
+		}
 		fnDef, err := canonLower(comp, def)
 		if err != nil {
 			return err
@@ -390,6 +448,10 @@ func (b *Builder) buildCanon(comp *Component, astCanon *ast.Canon) error {
 		comp.scope.coreFunctions = append(comp.scope.coreFunctions, fnDef)
 		return nil
 	case *ast.CanonResourceNew:
+		// Validate canon resource.new
+		if err := validateCanonResourceNew(&comp.scope, def); err != nil {
+			return err
+		}
 		fnDef, err := canonResourceNew(comp, def)
 		if err != nil {
 			return err
@@ -397,6 +459,10 @@ func (b *Builder) buildCanon(comp *Component, astCanon *ast.Canon) error {
 		comp.scope.coreFunctions = append(comp.scope.coreFunctions, fnDef)
 		return nil
 	case *ast.CanonResourceDrop:
+		// Validate canon resource.drop
+		if err := validateCanonResourceDrop(&comp.scope, def); err != nil {
+			return err
+		}
 		fnDef, err := canonResourceDrop(comp, def)
 		if err != nil {
 			return err
@@ -404,6 +470,10 @@ func (b *Builder) buildCanon(comp *Component, astCanon *ast.Canon) error {
 		comp.scope.coreFunctions = append(comp.scope.coreFunctions, fnDef)
 		return nil
 	case *ast.CanonResourceRep:
+		// Validate canon resource.rep
+		if err := validateCanonResourceRep(&comp.scope, def); err != nil {
+			return err
+		}
 		fnDef, err := canonResourceRep(comp, def)
 		if err != nil {
 			return err

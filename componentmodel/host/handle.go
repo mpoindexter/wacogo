@@ -140,7 +140,7 @@ func (Own[T]) resourceType() reflect.Type {
 }
 
 func (Own[T]) handleValueType(rt *componentmodel.ResourceType) componentmodel.ValueType {
-	return &componentmodel.OwnType{ResourceType: rt}
+	return componentmodel.OwnType{ResourceType: rt}
 }
 
 func (Own[T]) isOwnHandle() {}
@@ -163,7 +163,7 @@ func (Borrow[T]) resourceType() reflect.Type {
 }
 
 func (Borrow[T]) handleValueType(rt *componentmodel.ResourceType) componentmodel.ValueType {
-	return &componentmodel.BorrowType{ResourceType: rt}
+	return componentmodel.BorrowType{ResourceType: rt}
 }
 
 func (Borrow[T]) isBorrowHandle() {}

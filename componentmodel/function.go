@@ -31,7 +31,8 @@ func (d *functionAliasDefinition) resolveFunction(ctx context.Context, scope ins
 }
 
 type functionImportDefinition struct {
-	name string
+	name            string
+	expectedTypeDef componentModelTypeDefinition
 }
 
 func (d *functionImportDefinition) resolveFunction(ctx context.Context, scope instanceScope) (*Function, error) {
@@ -42,6 +43,15 @@ func (d *functionImportDefinition) resolveFunction(ctx context.Context, scope in
 	fn, ok := val.(*Function)
 	if !ok {
 		return nil, fmt.Errorf("import %s is not a function", d.name)
+	}
+
+	expectedType, err := d.expectedTypeDef.resolveType(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+
+	if !expectedType.equalsType(fn.typ) {
+		return nil, fmt.Errorf("imported function %s does not match expected type", d.name)
 	}
 	return fn, nil
 }

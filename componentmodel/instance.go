@@ -139,7 +139,8 @@ func (d *instanceStaticDefinition) resolveInstance(ctx context.Context, scope in
 }
 
 type instanceImportDefinition struct {
-	name string
+	name            string
+	expectedTypeDef componentModelTypeDefinition
 }
 
 func (d *instanceImportDefinition) resolveInstance(ctx context.Context, scope instanceScope) (*Instance, error) {
@@ -150,6 +151,16 @@ func (d *instanceImportDefinition) resolveInstance(ctx context.Context, scope in
 	inst, ok := val.(*Instance)
 	if !ok {
 		return nil, fmt.Errorf("import %s is not an instance", d.name)
+	}
+	expectedType, err := d.expectedTypeDef.resolveType(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+
+	if instType, ok := expectedType.(*instanceType); ok {
+		if err := instType.validateInstance(inst); err != nil {
+			return nil, fmt.Errorf("imported instance %s does not match expected type: %w", d.name, err)
+		}
 	}
 	return inst, nil
 }

@@ -16,6 +16,11 @@ type coreType interface {
 	isCompatible(other coreType) bool
 }
 
+type coreTypeImportExportChecker interface {
+	checkImport(name moduleName, mod *coreModule) bool
+	checkExport(name string, mod *coreModule) bool
+}
+
 type coreTypeStaticDefinition struct {
 	typ coreType
 }
@@ -55,6 +60,63 @@ func (d *coreTypeFuncDefinition) resolveCoreType(ctx context.Context, scope inst
 type coreTypeFunc struct {
 	paramTypes  []coreType
 	resultTypes []coreType
+}
+
+var _ coreTypeImportExportChecker = (*coreTypeFunc)(nil)
+
+func (c *coreTypeFunc) checkImport(name moduleName, mod *coreModule) bool {
+	for _, fnDef := range mod.module.ImportedFunctions() {
+		modName, fnName, ok := fnDef.Import()
+		if ok {
+			if modName == name.module && fnName == name.name {
+				expectedType := &coreTypeFunc{
+					paramTypes:  c.paramTypes,
+					resultTypes: c.resultTypes,
+				}
+
+				paramTypes := fnDef.ParamTypes()
+				resultTypes := fnDef.ResultTypes()
+				actualType := &coreTypeFunc{
+					paramTypes:  make([]coreType, len(paramTypes)),
+					resultTypes: make([]coreType, len(resultTypes)),
+				}
+				for i, typ := range paramTypes {
+					actualType.paramTypes[i] = coreTypeWazero(typ)
+				}
+				for i, typ := range resultTypes {
+					actualType.resultTypes[i] = coreTypeWazero(typ)
+				}
+				return expectedType.isCompatible(actualType)
+			}
+		}
+	}
+	return false
+}
+
+func (c *coreTypeFunc) checkExport(name string, mod *coreModule) bool {
+	for fnName, fnDef := range mod.module.ExportedFunctions() {
+		if fnName == name {
+			expectedType := &coreTypeFunc{
+				paramTypes:  c.paramTypes,
+				resultTypes: c.resultTypes,
+			}
+
+			paramTypes := fnDef.ParamTypes()
+			resultTypes := fnDef.ResultTypes()
+			actualType := &coreTypeFunc{
+				paramTypes:  make([]coreType, len(paramTypes)),
+				resultTypes: make([]coreType, len(resultTypes)),
+			}
+			for i, typ := range paramTypes {
+				actualType.paramTypes[i] = coreTypeWazero(typ)
+			}
+			for i, typ := range resultTypes {
+				actualType.resultTypes[i] = coreTypeWazero(typ)
+			}
+			return expectedType.isCompatible(actualType)
+		}
+	}
+	return false
 }
 
 func (c *coreTypeFunc) isCompatible(other coreType) bool {
@@ -117,6 +179,29 @@ func (d *coreModuleTypeDefinition) resolveCoreType(ctx context.Context, scope in
 type coreModuleType struct {
 	imports map[moduleName]coreType
 	exports map[string]coreType
+}
+
+func (c *coreModuleType) validateModule(mod *coreModule) error {
+	for name, importType := range c.imports {
+		if checker, ok := importType.(coreTypeImportExportChecker); ok {
+			if !checker.checkImport(name, mod) {
+				return fmt.Errorf("import %s.%s does not match expected type", name.module, name.name)
+			}
+		}
+	}
+
+	for name, exportType := range c.exports {
+		if checker, ok := exportType.(coreTypeImportExportChecker); ok {
+			if !checker.checkExport(name, mod) {
+				return fmt.Errorf("export %s does not match expected type", name)
+			}
+		}
+	}
+
+	// TODO: we should validate tables and functions here as well, but wazero does not expose these
+	// in the API. We could parse them from the binary ourselves, but for now, we skip this validation.
+
+	return nil
 }
 
 func (c *coreModuleType) isCompatible(other coreType) bool {
@@ -216,6 +301,53 @@ func (t coreTypeFuncref) isCompatible(other coreType) bool {
 type coreMemType struct {
 	min uint32
 	max *uint32
+}
+
+var _ coreTypeImportExportChecker = (*coreTypeFunc)(nil)
+
+func (t *coreMemType) checkImport(name moduleName, mod *coreModule) bool {
+	for _, memDef := range mod.module.ImportedMemories() {
+		modName, memName, ok := memDef.Import()
+		if ok {
+			if modName == name.module && memName == name.name {
+				expectedType := &coreMemType{
+					min: t.min,
+					max: t.max,
+				}
+
+				actualType := &coreMemType{
+					min: memDef.Min(),
+					max: nil,
+				}
+				if max, ok := memDef.Max(); ok {
+					actualType.max = &max
+				}
+				return expectedType.isCompatible(actualType)
+			}
+		}
+	}
+	return false
+}
+
+func (t *coreMemType) checkExport(name string, mod *coreModule) bool {
+	for memName, memDef := range mod.module.ExportedMemories() {
+		if memName == name {
+			expectedType := &coreMemType{
+				min: t.min,
+				max: t.max,
+			}
+
+			actualType := &coreMemType{
+				min: memDef.Min(),
+				max: nil,
+			}
+			if max, ok := memDef.Max(); ok {
+				actualType.max = &max
+			}
+			return expectedType.isCompatible(actualType)
+		}
+	}
+	return false
 }
 
 func (t *coreMemType) isCompatible(other coreType) bool {

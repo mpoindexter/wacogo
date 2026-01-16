@@ -146,7 +146,8 @@ func (d *coreModuleInstanceExportAliasDefinition) resolveCoreModule(ctx context.
 }
 
 type coreModuleImportDefinition struct {
-	name string
+	name            string
+	expectedTypeDef coreTypeDefinition
 }
 
 func (d *coreModuleImportDefinition) resolveCoreModule(ctx context.Context, scope instanceScope) (*coreModule, error) {
@@ -158,6 +159,21 @@ func (d *coreModuleImportDefinition) resolveCoreModule(ctx context.Context, scop
 	if !ok {
 		return nil, fmt.Errorf("import %s is not a core module", d.name)
 	}
+
+	expectedType, err := d.expectedTypeDef.resolveCoreType(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+
+	modType, ok := expectedType.(*coreModuleType)
+	if !ok {
+		return nil, fmt.Errorf("expected type for core module import %s is not a core module type", d.name)
+	}
+
+	if err := modType.validateModule(coreMod); err != nil {
+		return nil, fmt.Errorf("core module import %s does not match expected type: %w", d.name, err)
+	}
+
 	return coreMod, nil
 }
 

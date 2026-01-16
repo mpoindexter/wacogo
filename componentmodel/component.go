@@ -89,7 +89,8 @@ func (d *componentStaticDefinition) resolveComponent(ctx context.Context, scope 
 }
 
 type componentImportDefinition struct {
-	name string
+	name            string
+	expectedTypeDef componentModelTypeDefinition
 }
 
 func (d *componentImportDefinition) resolveComponent(ctx context.Context, scope instanceScope) (*Component, error) {
@@ -100,6 +101,20 @@ func (d *componentImportDefinition) resolveComponent(ctx context.Context, scope 
 	comp, ok := val.(*Component)
 	if !ok {
 		return nil, fmt.Errorf("import %s is not a component", d.name)
+	}
+
+	expectedType, err := d.expectedTypeDef.resolveType(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+
+	componentType, ok := expectedType.(*componentType)
+	if !ok {
+		return nil, fmt.Errorf("expected type for component import %s is not a component type", d.name)
+	}
+
+	if err := componentType.validateComponent(comp); err != nil {
+		return nil, fmt.Errorf("component import %s does not match expected type: %w", d.name, err)
 	}
 	return comp, nil
 }

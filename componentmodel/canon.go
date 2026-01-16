@@ -3,6 +3,7 @@ package componentmodel
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/partite-ai/wacogo/ast"
 	"github.com/tetratelabs/wazero"
@@ -76,6 +77,35 @@ func (d *coreFunctionLoweredDefinition) resolveCoreFunction(ctx context.Context,
 		returnFlat = false
 		flatParamTypes = append(flatParamTypes, api.ValueTypeI32)
 		flatResultTypes = []api.ValueType{}
+	}
+
+	// Check if memory/realloc are needed and provided
+	needsMemory := !paramsFlat || !returnFlat
+	if slices.ContainsFunc(fn.typ.ParamTypes, typeNeedsMemory) {
+		needsMemory = true
+	}
+	if fn.typ.ResultType != nil && typeNeedsMemory(fn.typ.ResultType) {
+		needsMemory = true
+	}
+
+	needsRealloc := false
+	if fn.typ.ResultType != nil && typeNeedsRealloc(fn.typ.ResultType) {
+		needsRealloc = true
+	}
+
+	hasMemory := false
+	hasRealloc := false
+	for _, opt := range d.astDef.Options {
+		switch opt.(type) {
+		case *ast.MemoryOpt:
+			hasMemory = true
+		case *ast.ReallocOpt:
+			hasRealloc = true
+		}
+	}
+
+	if err := validateCanonicalABIOptions(hasMemory, hasRealloc, needsMemory, needsRealloc); err != nil {
+		return nil, "", nil, fmt.Errorf("canon lower validation failed: %w", err)
 	}
 
 	mod, err := scope.runtime().NewHostModuleBuilder(d.id).NewFunctionBuilder().
@@ -168,15 +198,18 @@ type coreFunctionResourceNewDefinition struct {
 func (d *coreFunctionResourceNewDefinition) resolveCoreFunction(ctx context.Context, scope instanceScope) (api.Module, string, api.FunctionDefinition, error) {
 	typeDef, err := scope.resolveComponentModelTypeDefinition(0, d.astDef.TypeIdx)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon drop: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon resource.new: %w", err)
 	}
 	resourceTypeGeneric, err := typeDef.resolveType(ctx, scope)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon drop: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon resource.new: %w", err)
 	}
 	resourceType, ok := resourceTypeGeneric.(*ResourceType)
 	if !ok {
-		return nil, "", nil, fmt.Errorf("canon drop type is not a resource")
+		return nil, "", nil, fmt.Errorf("canon resource.new type is not a resource")
+	}
+	if err := validateResourceTypeDefinedInComponent(resourceType, scope.currentInstance()); err != nil {
+		return nil, "", nil, fmt.Errorf("canon resource.new validation failed: %w", err)
 	}
 	mod, err := scope.runtime().NewHostModuleBuilder(d.id).NewFunctionBuilder().
 		WithGoModuleFunction(
@@ -277,15 +310,18 @@ type coreFunctionResourceRepDefinition struct {
 func (d *coreFunctionResourceRepDefinition) resolveCoreFunction(ctx context.Context, scope instanceScope) (api.Module, string, api.FunctionDefinition, error) {
 	typeDef, err := scope.resolveComponentModelTypeDefinition(0, d.astDef.TypeIdx)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon drop: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon resource.rep: %w", err)
 	}
 	resourceTypeGeneric, err := typeDef.resolveType(ctx, scope)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon drop: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon resource.rep: %w", err)
 	}
 	resourceType, ok := resourceTypeGeneric.(*ResourceType)
 	if !ok {
-		return nil, "", nil, fmt.Errorf("canon drop type is not a resource")
+		return nil, "", nil, fmt.Errorf("canon resource.rep type is not a resource")
+	}
+	if err := validateResourceTypeDefinedInComponent(resourceType, scope.currentInstance()); err != nil {
+		return nil, "", nil, fmt.Errorf("canon resource.rep validation failed: %w", err)
 	}
 	mod, err := scope.runtime().NewHostModuleBuilder(d.id).NewFunctionBuilder().
 		WithGoModuleFunction(
@@ -377,6 +413,32 @@ func (d *functionLiftedDefinition) resolveFunction(ctx context.Context, scope in
 	if len(flatResultTypes) > maxFlatResults {
 		returnFlat = false
 		flatResultTypes = []api.ValueType{api.ValueTypeI32}
+	}
+
+	// Check if memory/realloc are needed and provided
+	needsMemory := !paramsFlat || !returnFlat
+	if slices.ContainsFunc(fnType.ParamTypes, typeNeedsMemory) {
+		needsMemory = true
+	}
+	if fnType.ResultType != nil && typeNeedsMemory(fnType.ResultType) {
+		needsMemory = true
+	}
+
+	needsRealloc := slices.ContainsFunc(fnType.ParamTypes, typeNeedsRealloc)
+
+	hasMemory := false
+	hasRealloc := false
+	for _, opt := range d.astDef.Options {
+		switch opt.(type) {
+		case *ast.MemoryOpt:
+			hasMemory = true
+		case *ast.ReallocOpt:
+			hasRealloc = true
+		}
+	}
+
+	if err := validateCanonicalABIOptions(hasMemory, hasRealloc, needsMemory, needsRealloc); err != nil {
+		return nil, fmt.Errorf("canon lift validation failed: %w", err)
 	}
 
 	return NewFunction(

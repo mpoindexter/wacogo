@@ -35,7 +35,7 @@ func (c *componentImportExportDeclTypeCoreType) matchesImportExport(other any) b
 }
 
 type componentImportExportDeclTypeComponentModelType struct {
-	typ Type
+	bound bound
 }
 
 func (c *componentImportExportDeclTypeComponentModelType) matchesImportExport(other any) bool {
@@ -43,7 +43,49 @@ func (c *componentImportExportDeclTypeComponentModelType) matchesImportExport(ot
 	if !ok {
 		return false
 	}
-	return c.typ.equalsType(otherCompType)
+	return c.bound.containsType(otherCompType)
+}
+
+type componentImportExportDeclTypeComponent struct {
+	typ *componentType
+}
+
+func (c *componentImportExportDeclTypeComponent) matchesImportExport(other any) bool {
+	comp, ok := other.(*Component)
+	if !ok {
+		return false
+	}
+	if err := c.typ.validateComponent(comp); err != nil {
+		return false
+	}
+	return true
+}
+
+type componentImportExportDeclTypeInstance struct {
+	typ *instanceType
+}
+
+func (c *componentImportExportDeclTypeInstance) matchesImportExport(other any) bool {
+	inst, ok := other.(*Instance)
+	if !ok {
+		return false
+	}
+	if err := c.typ.validateInstance(inst); err != nil {
+		return false
+	}
+	return true
+}
+
+type componentImportExportDeclTypeFunction struct {
+	typ *FunctionType
+}
+
+func (c *componentImportExportDeclTypeFunction) matchesImportExport(other any) bool {
+	fn, ok := other.(*Function)
+	if !ok {
+		return false
+	}
+	return c.typ.equalsType(fn.typ)
 }
 
 type componentTypeDefinition struct {
@@ -80,6 +122,11 @@ type componentType struct {
 	exports map[string]componentImportExportDeclType
 }
 
+func (ct *componentType) validateComponent(comp *Component) error {
+	// TODO: Implement validation logic here
+	return nil
+}
+
 func (ct *componentType) equalsType(other Type) bool {
 	otherCt, ok := other.(*componentType)
 	if !ok {
@@ -108,6 +155,19 @@ func (d *instanceTypeDefinition) resolveType(ctx context.Context, scope instance
 
 type instanceType struct {
 	exports map[string]componentImportExportDeclType
+}
+
+func (it *instanceType) validateInstance(inst *Instance) error {
+	for name, exportType := range it.exports {
+		instExport, ok := inst.exports[name]
+		if !ok {
+			return fmt.Errorf("instance missing expected export: %s", name)
+		}
+		if !exportType.matchesImportExport(instExport) {
+			return fmt.Errorf("instance export %s does not match expected type", name)
+		}
+	}
+	return nil
 }
 
 func (it *instanceType) equalsType(other Type) bool {
@@ -140,15 +200,11 @@ func (it *instanceType) equalsType(other Type) bool {
 
 type typeSubResourceDefinition struct{}
 
+var anyResourceType = &ResourceType{}
+
 func (d *typeSubResourceDefinition) resolveType(ctx context.Context, scope instanceScope) (Type, error) {
-	return &typeSubResource{}, nil
-}
-
-type typeSubResource struct{}
-
-func (t *typeSubResource) equalsType(other Type) bool {
-	_, ok := other.(*typeSubResource)
-	return ok
+	// a dummy ResourceType that should not be used for an actual type
+	return anyResourceType, nil
 }
 
 type typeAliasDefinition struct {
@@ -180,7 +236,8 @@ func (d *typeStaticDefinition) resolveType(ctx context.Context, scope instanceSc
 }
 
 type typeImportDefinition struct {
-	name string
+	name             string
+	typeBoundCreator func(ctx context.Context, scope instanceScope) (bound, error)
 }
 
 func (d *typeImportDefinition) resolveType(ctx context.Context, scope instanceScope) (Type, error) {
@@ -188,7 +245,18 @@ func (d *typeImportDefinition) resolveType(ctx context.Context, scope instanceSc
 	if err != nil {
 		return nil, err
 	}
-	return ensureType(val)
+	importedType, err := ensureType(val)
+	if err != nil {
+		return nil, fmt.Errorf("import %s is not a type: %w", d.name, err)
+	}
+	bound, err := d.typeBoundCreator(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	if !bound.containsType(importedType) {
+		return nil, fmt.Errorf("imported type %s does not match expected bound", d.name)
+	}
+	return importedType, nil
 }
 
 type listTypeDefinition struct {
@@ -232,9 +300,14 @@ func (d *recordTypeDefinition) resolveType(ctx context.Context, scope instanceSc
 			Type: elemValueType,
 		}
 	}
-	return &RecordType{
+	recordType := &RecordType{
 		Fields: fields,
-	}, nil
+	}
+	// Validate record field names are unique
+	if err := validateRecordFieldNames(recordType); err != nil {
+		return nil, err
+	}
+	return recordType, nil
 }
 
 type variantTypeDefinition struct {
@@ -262,9 +335,17 @@ func (d *variantTypeDefinition) resolveType(ctx context.Context, scope instanceS
 			Type: caseValueType,
 		}
 	}
-	return &VariantType{
+	variantType := &VariantType{
 		Cases: cases,
-	}, nil
+	}
+	// Validate variant has at least one case and case names are unique
+	if err := validateVariantCasesNonEmpty(variantType); err != nil {
+		return nil, err
+	}
+	if err := validateVariantCaseNames(variantType); err != nil {
+		return nil, err
+	}
+	return variantType, nil
 }
 
 type resourceTypeDefinition struct {
@@ -312,9 +393,10 @@ func (d *ownTypeDefinition) resolveType(ctx context.Context, scope instanceScope
 	if !ok {
 		return nil, fmt.Errorf("own resource type is not a resource type: %T", resType)
 	}
-	return OwnType{
+	ownType := OwnType{
 		ResourceType: resValueType,
-	}, nil
+	}
+	return ownType, nil
 }
 
 type borrowTypeDefinition struct {
@@ -330,9 +412,10 @@ func (d *borrowTypeDefinition) resolveType(ctx context.Context, scope instanceSc
 	if !ok {
 		return nil, fmt.Errorf("borrow resource type is not a resource type: %T", resType)
 	}
-	return BorrowType{
+	borrowType := BorrowType{
 		ResourceType: resValueType,
-	}, nil
+	}
+	return borrowType, nil
 }
 
 type funcTypeDefinition struct {
@@ -361,10 +444,11 @@ func (d *funcTypeDefinition) resolveType(ctx context.Context, scope instanceScop
 	if !ok {
 		return nil, fmt.Errorf("function result type is not a value type: %T", resultType)
 	}
-	return &FunctionType{
+	funcType := &FunctionType{
 		ParamTypes: paramTypes,
 		ResultType: resultTypes,
-	}, nil
+	}
+	return funcType, nil
 }
 
 func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (componentModelTypeDefinition, error) {
@@ -480,10 +564,15 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 			elementTypeDefs: elementTypeDefs,
 		}, nil
 	case *ast.FlagsType:
+		flagsType := &FlagsType{
+			FlagNames: def.Labels,
+		}
+		// Validate flag names are unique
+		if err := validateFlagNames(flagsType); err != nil {
+			return nil, err
+		}
 		return &typeStaticDefinition{
-			typ: &FlagsType{
-				FlagNames: def.Labels,
-			},
+			typ: flagsType,
 		}, nil
 	case *ast.EnumType:
 		labels := make([]string, len(def.Labels))
@@ -645,18 +734,51 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							}
 							return &componentImportExportDeclTypeCoreType{typ: coreType}, nil
 						}
-					case ast.SortComponent, ast.SortFunc, ast.SortInstance:
+					case ast.SortComponent:
 						typeDef, err := scope.resolveComponentModelTypeDefinition(0, desc.TypeIdx)
 						if err != nil {
 							return nil, err
 						}
-						typeScope.componentModelTypes = append(typeScope.componentModelTypes, typeDef)
 						imports[decl.ImportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							compType, err := typeDef.resolveType(ctx, scope)
+							typ, err := typeDef.resolveType(ctx, scope)
 							if err != nil {
 								return nil, err
 							}
-							return &componentImportExportDeclTypeComponentModelType{typ: compType}, nil
+							if compType, ok := typ.(*componentType); ok {
+								return &componentImportExportDeclTypeComponent{typ: compType}, nil
+							}
+							return nil, fmt.Errorf("imported component type is not a component type: %T", typ)
+						}
+					case ast.SortFunc:
+						typeDef, err := scope.resolveComponentModelTypeDefinition(0, desc.TypeIdx)
+						if err != nil {
+							return nil, err
+						}
+						imports[decl.ImportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
+							typ, err := typeDef.resolveType(ctx, scope)
+							if err != nil {
+								return nil, err
+							}
+
+							if funcType, ok := typ.(*FunctionType); ok {
+								return &componentImportExportDeclTypeFunction{typ: funcType}, nil
+							}
+							return nil, fmt.Errorf("imported function type is not a function type: %T", typ)
+						}
+					case ast.SortInstance:
+						typeDef, err := scope.resolveComponentModelTypeDefinition(0, desc.TypeIdx)
+						if err != nil {
+							return nil, err
+						}
+						imports[decl.ImportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
+							typ, err := typeDef.resolveType(ctx, scope)
+							if err != nil {
+								return nil, err
+							}
+							if instType, ok := typ.(*instanceType); ok {
+								return &componentImportExportDeclTypeInstance{typ: instType}, nil
+							}
+							return nil, fmt.Errorf("imported instance type is not an instance type: %T", typ)
 						}
 					default:
 						return nil, fmt.Errorf("unsupported import sort in component type declarations: %v", desc.Sort)
@@ -674,17 +796,13 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							if err != nil {
 								return nil, err
 							}
-							return &componentImportExportDeclTypeComponentModelType{typ: compType}, nil
+							return &componentImportExportDeclTypeComponentModelType{bound: eqBound{typ: compType}}, nil
 						}
 					case *ast.SubResourceBound:
 						typeDef := &typeSubResourceDefinition{}
 						typeScope.componentModelTypes = append(typeScope.componentModelTypes, typeDef)
 						imports[decl.ImportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							compType, err := typeDef.resolveType(ctx, scope)
-							if err != nil {
-								return nil, err
-							}
-							return &componentImportExportDeclTypeComponentModelType{typ: compType}, nil
+							return &componentImportExportDeclTypeComponentModelType{bound: subResourceBound{}}, nil
 						}
 					default:
 						return nil, fmt.Errorf("unsupported type extern desc bound in component type declarations: %T", bound)
@@ -707,18 +825,51 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							}
 							return &componentImportExportDeclTypeCoreType{typ: coreType}, nil
 						}
-					case ast.SortComponent, ast.SortFunc, ast.SortInstance:
+					case ast.SortComponent:
 						typeDef, err := typeScope.resolveComponentModelTypeDefinition(0, desc.TypeIdx)
 						if err != nil {
 							return nil, err
 						}
-						typeScope.componentModelTypes = append(typeScope.componentModelTypes, typeDef)
 						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							compType, err := typeDef.resolveType(ctx, scope)
+							typ, err := typeDef.resolveType(ctx, scope)
 							if err != nil {
 								return nil, err
 							}
-							return &componentImportExportDeclTypeComponentModelType{typ: compType}, nil
+							if compType, ok := typ.(*componentType); ok {
+								return &componentImportExportDeclTypeComponent{typ: compType}, nil
+							}
+							return nil, fmt.Errorf("exported component type is not a component type: %T", typ)
+						}
+					case ast.SortFunc:
+						typeDef, err := typeScope.resolveComponentModelTypeDefinition(0, desc.TypeIdx)
+						if err != nil {
+							return nil, err
+						}
+						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
+							typ, err := typeDef.resolveType(ctx, scope)
+							if err != nil {
+								return nil, err
+							}
+
+							if funcType, ok := typ.(*FunctionType); ok {
+								return &componentImportExportDeclTypeFunction{typ: funcType}, nil
+							}
+							return nil, fmt.Errorf("exported function type is not a function type: %T", typ)
+						}
+					case ast.SortInstance:
+						typeDef, err := typeScope.resolveComponentModelTypeDefinition(0, desc.TypeIdx)
+						if err != nil {
+							return nil, err
+						}
+						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
+							typ, err := typeDef.resolveType(ctx, scope)
+							if err != nil {
+								return nil, err
+							}
+							if instType, ok := typ.(*instanceType); ok {
+								return &componentImportExportDeclTypeInstance{typ: instType}, nil
+							}
+							return nil, fmt.Errorf("exported instance type is not an instance type: %T", typ)
 						}
 					default:
 						return nil, fmt.Errorf("unsupported export sort in component type declarations: %v", desc.Sort)
@@ -736,17 +887,13 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							if err != nil {
 								return nil, err
 							}
-							return &componentImportExportDeclTypeComponentModelType{typ: compType}, nil
+							return &componentImportExportDeclTypeComponentModelType{bound: eqBound{typ: compType}}, nil
 						}
 					case *ast.SubResourceBound:
 						typeDef := &typeSubResourceDefinition{}
 						typeScope.componentModelTypes = append(typeScope.componentModelTypes, typeDef)
 						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							compType, err := typeDef.resolveType(ctx, scope)
-							if err != nil {
-								return nil, err
-							}
-							return &componentImportExportDeclTypeComponentModelType{typ: compType}, nil
+							return &componentImportExportDeclTypeComponentModelType{bound: subResourceBound{}}, nil
 						}
 					default:
 						return nil, fmt.Errorf("unsupported type extern desc bound in component type declarations: %T", bound)
@@ -800,10 +947,10 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							exportName:  target.Name,
 						})
 					default:
-						return nil, fmt.Errorf("unsupported alias sort in component type declarations: %v", decl.Alias.Sort)
+						return nil, fmt.Errorf("unsupported alias sort in instance type declarations: %v", decl.Alias.Sort)
 					}
 				case *ast.CoreExportAlias:
-					return nil, fmt.Errorf("core export alias not supported in component type declarations")
+					return nil, fmt.Errorf("core export alias not supported in instance type declarations")
 				case *ast.OuterAlias:
 					switch decl.Alias.Sort {
 					case ast.SortInstance:
@@ -842,18 +989,51 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							}
 							return &componentImportExportDeclTypeCoreType{typ: coreType}, nil
 						}
-					case ast.SortComponent, ast.SortFunc, ast.SortInstance:
+					case ast.SortComponent:
 						typeDef, err := typeScope.resolveComponentModelTypeDefinition(0, desc.TypeIdx)
 						if err != nil {
 							return nil, err
 						}
-						typeScope.componentModelTypes = append(typeScope.componentModelTypes, typeDef)
 						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							compType, err := typeDef.resolveType(ctx, scope)
+							typ, err := typeDef.resolveType(ctx, scope)
 							if err != nil {
 								return nil, err
 							}
-							return &componentImportExportDeclTypeComponentModelType{typ: compType}, nil
+							if compType, ok := typ.(*componentType); ok {
+								return &componentImportExportDeclTypeComponent{typ: compType}, nil
+							}
+							return nil, fmt.Errorf("exported component type is not a component type: %T", typ)
+						}
+					case ast.SortFunc:
+						typeDef, err := typeScope.resolveComponentModelTypeDefinition(0, desc.TypeIdx)
+						if err != nil {
+							return nil, err
+						}
+						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
+							typ, err := typeDef.resolveType(ctx, scope)
+							if err != nil {
+								return nil, err
+							}
+
+							if funcType, ok := typ.(*FunctionType); ok {
+								return &componentImportExportDeclTypeFunction{typ: funcType}, nil
+							}
+							return nil, fmt.Errorf("exported function type is not a function type: %T", typ)
+						}
+					case ast.SortInstance:
+						typeDef, err := typeScope.resolveComponentModelTypeDefinition(0, desc.TypeIdx)
+						if err != nil {
+							return nil, err
+						}
+						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
+							typ, err := typeDef.resolveType(ctx, scope)
+							if err != nil {
+								return nil, err
+							}
+							if instType, ok := typ.(*instanceType); ok {
+								return &componentImportExportDeclTypeInstance{typ: instType}, nil
+							}
+							return nil, fmt.Errorf("exported instance type is not an instance type: %T", typ)
 						}
 					default:
 						return nil, fmt.Errorf("unsupported export sort in component type declarations: %v", desc.Sort)
@@ -871,17 +1051,13 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							if err != nil {
 								return nil, err
 							}
-							return &componentImportExportDeclTypeComponentModelType{typ: compType}, nil
+							return &componentImportExportDeclTypeComponentModelType{bound: eqBound{typ: compType}}, nil
 						}
 					case *ast.SubResourceBound:
 						typeDef := &typeSubResourceDefinition{}
 						typeScope.componentModelTypes = append(typeScope.componentModelTypes, typeDef)
 						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							compType, err := typeDef.resolveType(ctx, scope)
-							if err != nil {
-								return nil, err
-							}
-							return &componentImportExportDeclTypeComponentModelType{typ: compType}, nil
+							return &componentImportExportDeclTypeComponentModelType{bound: subResourceBound{}}, nil
 						}
 					default:
 						return nil, fmt.Errorf("unsupported type extern desc bound in component type declarations: %T", bound)
@@ -960,4 +1136,23 @@ func TupleType(elementTypes ...ValueType) *RecordType {
 	return &RecordType{
 		Fields: fields,
 	}
+}
+
+type bound interface {
+	containsType(Type) bool
+}
+
+type eqBound struct {
+	typ Type
+}
+
+func (b eqBound) containsType(t Type) bool {
+	return b.typ.equalsType(t)
+}
+
+type subResourceBound struct{}
+
+func (b subResourceBound) containsType(t Type) bool {
+	_, ok := t.(*ResourceType)
+	return ok
 }
