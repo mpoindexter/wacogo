@@ -9,6 +9,8 @@ import (
 	"github.com/tetratelabs/wazero/api"
 )
 
+const maxTypeRecursionDepth = 100
+
 type componentModelTypeDefinition interface {
 	resolveType(ctx context.Context, scope instanceScope) (Type, error)
 }
@@ -200,11 +202,8 @@ func (it *instanceType) equalsType(other Type) bool {
 
 type typeSubResourceDefinition struct{}
 
-var anyResourceType = &ResourceType{}
-
 func (d *typeSubResourceDefinition) resolveType(ctx context.Context, scope instanceScope) (Type, error) {
-	// a dummy ResourceType that should not be used for an actual type
-	return anyResourceType, nil
+	return &ResourceType{}, nil
 }
 
 type typeAliasDefinition struct {
@@ -264,7 +263,7 @@ type listTypeDefinition struct {
 }
 
 func (d *listTypeDefinition) resolveType(ctx context.Context, scope instanceScope) (Type, error) {
-	elementType, err := d.elementTypeDef.resolveType(ctx, scope)
+	elementType, err := scope.resolveType(ctx, d.elementTypeDef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve list element type: %w", err)
 	}
@@ -287,7 +286,7 @@ type recordTypeDefinition struct {
 func (d *recordTypeDefinition) resolveType(ctx context.Context, scope instanceScope) (Type, error) {
 	fields := make([]*RecordField, len(d.elementTypeDefs))
 	for i, elemTypeDef := range d.elementTypeDefs {
-		elemType, err := elemTypeDef.resolveType(ctx, scope)
+		elemType, err := scope.resolveType(ctx, elemTypeDef)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve record element type: %w", err)
 		}
@@ -320,7 +319,7 @@ func (d *variantTypeDefinition) resolveType(ctx context.Context, scope instanceS
 	for i, caseTypeDef := range d.elementTypeDefs {
 		var caseValueType ValueType
 		if caseTypeDef != nil {
-			caseType, err := caseTypeDef.resolveType(ctx, scope)
+			caseType, err := scope.resolveType(ctx, caseTypeDef)
 			if err != nil {
 				return nil, fmt.Errorf("failed to resolve variant case type: %w", err)
 			}
@@ -385,7 +384,7 @@ type ownTypeDefinition struct {
 }
 
 func (d *ownTypeDefinition) resolveType(ctx context.Context, scope instanceScope) (Type, error) {
-	resType, err := d.resourceTypeDef.resolveType(ctx, scope)
+	resType, err := scope.resolveType(ctx, d.resourceTypeDef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve own resource type: %w", err)
 	}
@@ -404,7 +403,7 @@ type borrowTypeDefinition struct {
 }
 
 func (d *borrowTypeDefinition) resolveType(ctx context.Context, scope instanceScope) (Type, error) {
-	resType, err := d.resourceTypeDef.resolveType(ctx, scope)
+	resType, err := scope.resolveType(ctx, d.resourceTypeDef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve borrow resource type: %w", err)
 	}
@@ -426,7 +425,7 @@ type funcTypeDefinition struct {
 func (d *funcTypeDefinition) resolveType(ctx context.Context, scope instanceScope) (Type, error) {
 	paramTypes := make([]ValueType, len(d.paramTypeDefs))
 	for i, paramTypeDef := range d.paramTypeDefs {
-		paramType, err := paramTypeDef.resolveType(ctx, scope)
+		paramType, err := scope.resolveType(ctx, paramTypeDef)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve function param type: %w", err)
 		}
@@ -436,7 +435,14 @@ func (d *funcTypeDefinition) resolveType(ctx context.Context, scope instanceScop
 		}
 		paramTypes[i] = paramValueType
 	}
-	resultType, err := d.resultTypeDef.resolveType(ctx, scope)
+	if d.resultTypeDef == nil {
+		funcType := &FunctionType{
+			ParamTypes: paramTypes,
+			ResultType: nil,
+		}
+		return funcType, nil
+	}
+	resultType, err := scope.resolveType(ctx, d.resultTypeDef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve function result type: %w", err)
 	}
@@ -642,6 +648,13 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 			}
 			paramTypeDefs[i] = paramTypeDef
 		}
+
+		if def.Results == nil {
+			return &funcTypeDefinition{
+				paramTypeDefs: paramTypeDefs,
+			}, nil
+		}
+
 		resultTypeDef, err := astTypeToTypeDefinition(scope, def.Results)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve function result type: %w", err)
@@ -674,7 +687,11 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 					}
 					typeScope.coreTypes = append(typeScope.coreTypes, recType)
 				case *ast.CoreModuleType:
-					return nil, fmt.Errorf("core module type not supported in component type declarations")
+					modType, err := astModuleTypeToCoreModuleTypeDefinition(&typeScope, defType)
+					if err != nil {
+						return nil, err
+					}
+					typeScope.coreTypes = append(typeScope.coreTypes, modType)
 				default:
 					return nil, fmt.Errorf("unsupported core type definition: %T", defType)
 				}
@@ -740,7 +757,7 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							return nil, err
 						}
 						imports[decl.ImportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							typ, err := typeDef.resolveType(ctx, scope)
+							typ, err := scope.resolveType(ctx, typeDef)
 							if err != nil {
 								return nil, err
 							}
@@ -755,7 +772,7 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							return nil, err
 						}
 						imports[decl.ImportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							typ, err := typeDef.resolveType(ctx, scope)
+							typ, err := scope.resolveType(ctx, typeDef)
 							if err != nil {
 								return nil, err
 							}
@@ -771,7 +788,7 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							return nil, err
 						}
 						imports[decl.ImportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							typ, err := typeDef.resolveType(ctx, scope)
+							typ, err := scope.resolveType(ctx, typeDef)
 							if err != nil {
 								return nil, err
 							}
@@ -792,7 +809,7 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 						}
 						typeScope.componentModelTypes = append(typeScope.componentModelTypes, typeDef)
 						imports[decl.ImportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							compType, err := typeDef.resolveType(ctx, scope)
+							compType, err := scope.resolveType(ctx, typeDef)
 							if err != nil {
 								return nil, err
 							}
@@ -831,7 +848,7 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							return nil, err
 						}
 						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							typ, err := typeDef.resolveType(ctx, scope)
+							typ, err := scope.resolveType(ctx, typeDef)
 							if err != nil {
 								return nil, err
 							}
@@ -846,7 +863,7 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							return nil, err
 						}
 						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							typ, err := typeDef.resolveType(ctx, scope)
+							typ, err := scope.resolveType(ctx, typeDef)
 							if err != nil {
 								return nil, err
 							}
@@ -862,7 +879,7 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							return nil, err
 						}
 						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							typ, err := typeDef.resolveType(ctx, scope)
+							typ, err := scope.resolveType(ctx, typeDef)
 							if err != nil {
 								return nil, err
 							}
@@ -883,7 +900,7 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 						}
 						typeScope.componentModelTypes = append(typeScope.componentModelTypes, typeDef)
 						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							compType, err := typeDef.resolveType(ctx, scope)
+							compType, err := scope.resolveType(ctx, typeDef)
 							if err != nil {
 								return nil, err
 							}
@@ -928,7 +945,11 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 					}
 					typeScope.coreTypes = append(typeScope.coreTypes, recType)
 				case *ast.CoreModuleType:
-					return nil, fmt.Errorf("core module type not supported in component type declarations")
+					modType, err := astModuleTypeToCoreModuleTypeDefinition(&typeScope, defType)
+					if err != nil {
+						return nil, err
+					}
+					typeScope.coreTypes = append(typeScope.coreTypes, modType)
 				default:
 					return nil, fmt.Errorf("unsupported core type definition: %T", defType)
 				}
@@ -995,7 +1016,7 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							return nil, err
 						}
 						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							typ, err := typeDef.resolveType(ctx, scope)
+							typ, err := scope.resolveType(ctx, typeDef)
 							if err != nil {
 								return nil, err
 							}
@@ -1010,7 +1031,7 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							return nil, err
 						}
 						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							typ, err := typeDef.resolveType(ctx, scope)
+							typ, err := scope.resolveType(ctx, typeDef)
 							if err != nil {
 								return nil, err
 							}
@@ -1026,7 +1047,7 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 							return nil, err
 						}
 						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							typ, err := typeDef.resolveType(ctx, scope)
+							typ, err := scope.resolveType(ctx, typeDef)
 							if err != nil {
 								return nil, err
 							}
@@ -1047,7 +1068,7 @@ func astTypeToTypeDefinition(scope definitionScope, defType ast.DefType) (compon
 						}
 						typeScope.componentModelTypes = append(typeScope.componentModelTypes, typeDef)
 						exports[decl.ExportName] = func(ctx context.Context, scope instanceScope) (componentImportExportDeclType, error) {
-							compType, err := typeDef.resolveType(ctx, scope)
+							compType, err := scope.resolveType(ctx, typeDef)
 							if err != nil {
 								return nil, err
 							}

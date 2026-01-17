@@ -1274,11 +1274,14 @@ func NewResourceType(instance *Instance, repType reflect.Type, destructor func(c
 }
 
 func (t *ResourceType) equalsType(other Type) bool {
-	if t == anyResourceType {
-		_, ok := other.(*ResourceType)
-		return ok
+	otherRt, ok := other.(*ResourceType)
+	if !ok {
+		return false
 	}
-	return t == other
+	if t.instance == nil {
+		return otherRt.instance != nil || t == otherRt
+	}
+	return t == otherRt
 }
 
 type ResourceHandle interface {
@@ -1413,18 +1416,17 @@ func (t OwnType) load(llc *LiftLoadContext, offset uint32) (Value, error) {
 
 func (t OwnType) lift(llc *LiftLoadContext, handleIdx uint32) (Value, error) {
 	h := llc.instance.loweredHandles.remove(handleIdx)
+	oh, ok := h.(*ownHandle)
+	if !ok {
+		return nil, fmt.Errorf("expected owned resource handle during lift, got borrowed")
+	}
 	if h.resourceType() != t.ResourceType {
 		return nil, fmt.Errorf("resource handle type mismatch during lift: expected %p, got %p", t.ResourceType, h.resourceType())
 	}
 	if h.isBorrowed() {
 		return nil, fmt.Errorf("cannot lift owned resource while it has active borrows")
 	}
-
-	return &ownHandle{
-		instance: llc.instance,
-		typ:      t.ResourceType,
-		rep:      h,
-	}, nil
+	return oh.Move(llc.instance)
 }
 
 func (t OwnType) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
@@ -1584,6 +1586,11 @@ func (t BorrowType) store(llc *LiftLoadContext, offset uint32, val Value) error 
 
 func (t BorrowType) lower(llc *LiftLoadContext, v Value) (uint32, error) {
 	borrowVal := v.(ResourceHandle)
+	if llc.instance == borrowVal.resourceType().instance {
+		if u32, ok := borrowVal.Resource().(uint32); ok {
+			return u32, nil
+		}
+	}
 	idx := llc.instance.loweredHandles.add(borrowVal.Borrow())
 	return idx, nil
 }

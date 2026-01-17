@@ -200,7 +200,7 @@ func (d *coreFunctionResourceNewDefinition) resolveCoreFunction(ctx context.Cont
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon resource.new: %w", err)
 	}
-	resourceTypeGeneric, err := typeDef.resolveType(ctx, scope)
+	resourceTypeGeneric, err := scope.resolveType(ctx, typeDef)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon resource.new: %w", err)
 	}
@@ -255,7 +255,7 @@ func (d *coreFunctionResourceDropDefinition) resolveCoreFunction(ctx context.Con
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon drop: %w", err)
 	}
-	resourceTypeGeneric, err := typeDef.resolveType(ctx, scope)
+	resourceTypeGeneric, err := scope.resolveType(ctx, typeDef)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon drop: %w", err)
 	}
@@ -312,7 +312,7 @@ func (d *coreFunctionResourceRepDefinition) resolveCoreFunction(ctx context.Cont
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon resource.rep: %w", err)
 	}
-	resourceTypeGeneric, err := typeDef.resolveType(ctx, scope)
+	resourceTypeGeneric, err := scope.resolveType(ctx, typeDef)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon resource.rep: %w", err)
 	}
@@ -374,7 +374,7 @@ func (d *functionLiftedDefinition) resolveFunction(ctx context.Context, scope in
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve function type for canon lift: %w", err)
 	}
-	fnTypeGeneric, err := fnTypeDef.resolveType(ctx, scope)
+	fnTypeGeneric, err := scope.resolveType(ctx, fnTypeDef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve function type for canon lift: %w", err)
 	}

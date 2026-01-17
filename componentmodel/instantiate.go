@@ -16,6 +16,8 @@ type instantiation struct {
 
 	coreInstances []*coreInstance
 	instances     []*Instance
+	types         map[any]Type
+	typeDepth     int
 }
 
 var _ instanceScope = (*instantiation)(nil)
@@ -29,6 +31,7 @@ func newInstantiation(parent instanceScope, component *Component, args map[strin
 		wazeroRuntime:   component.runtime,
 		coreInstances:   make([]*coreInstance, len(component.scope.coreInstances)),
 		instances:       make([]*Instance, len(component.scope.instances)),
+		types:           make(map[any]Type, len(component.scope.componentModelTypes)),
 	}
 }
 
@@ -82,4 +85,26 @@ func (i *instantiation) resolveCoreInstance(ctx context.Context, idx uint32) (*c
 		i.coreInstances[idx] = inst
 	}
 	return i.coreInstances[idx], nil
+}
+
+func (i *instantiation) resolveType(ctx context.Context, def componentModelTypeDefinition) (Type, error) {
+	i.typeDepth++
+	defer func() {
+		i.typeDepth--
+	}()
+	if i.typeDepth > maxTypeRecursionDepth {
+		return nil, fmt.Errorf("type nesting is too deep")
+	}
+	// call before memoization to handle recursive type depth checking
+	typ, err := def.resolveType(ctx, i)
+	if err != nil {
+		return nil, err
+	}
+
+	if memoTyp, ok := i.types[def]; ok {
+		return memoTyp, nil
+	}
+
+	i.types[def] = typ
+	return typ, nil
 }

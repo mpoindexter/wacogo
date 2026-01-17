@@ -103,7 +103,7 @@ func (d *componentImportDefinition) resolveComponent(ctx context.Context, scope 
 		return nil, fmt.Errorf("import %s is not a component", d.name)
 	}
 
-	expectedType, err := d.expectedTypeDef.resolveType(ctx, scope)
+	expectedType, err := scope.resolveType(ctx, d.expectedTypeDef)
 	if err != nil {
 		return nil, err
 	}

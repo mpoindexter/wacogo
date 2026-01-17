@@ -450,7 +450,9 @@ func astRecTypeToCoreTypeDefinition(scope definitionScope, astType *ast.CoreRecT
 func astModuleTypeToCoreModuleTypeDefinition(scope definitionScope, astType *ast.CoreModuleType) (*coreModuleTypeDefinition, error) {
 	imports := make(map[moduleName]coreTypeDefinition)
 	exports := make(map[string]coreTypeDefinition)
-	var moduleScope coreTypeModuleTypeScope
+	moduleScope := coreTypeModuleTypeScope{
+		parent: scope,
+	}
 	for _, decl := range astType.Declarations {
 		switch decl := decl.(type) {
 		case *ast.CoreTypeDecl:
@@ -476,6 +478,21 @@ func astModuleTypeToCoreModuleTypeDefinition(scope definitionScope, astType *ast
 				return nil, fmt.Errorf("failed to convert import %s: %w", decl.Name, err)
 			}
 			exports[decl.Name] = def
+		case *ast.CoreAliasDecl:
+			alias := decl.Target.(*ast.CoreOuterAlias)
+			switch decl.Sort {
+			case ast.CoreSortType:
+				def, err := moduleScope.resolveCoreTypeDefinition(alias.Count, alias.Idx)
+				if err != nil {
+					return nil, fmt.Errorf("failed to resolve core type definition for alias: %w", err)
+				}
+				moduleScope.types = append(moduleScope.types, def)
+				continue
+			default:
+				return nil, fmt.Errorf("unsupported core alias sort: %v", decl.Sort)
+			}
+		default:
+			return nil, fmt.Errorf("unsupported module type declaration: %T", decl)
 		}
 	}
 

@@ -274,6 +274,13 @@ func (b *Builder) buildOuterAlias(comp *Component, sort ast.Sort, alias *ast.Out
 		}
 		comp.scope.components = append(comp.scope.components, componentDef)
 		return nil
+	case ast.SortCoreType:
+		coreTypeDef, err := comp.scope.resolveCoreTypeDefinition(alias.Count, alias.Idx)
+		if err != nil {
+			return err
+		}
+		comp.scope.coreTypes = append(comp.scope.coreTypes, coreTypeDef)
+		return nil
 	default:
 		return fmt.Errorf("unsupported outer alias sort: %v", sort)
 	}
@@ -316,7 +323,7 @@ func (b *Builder) buildImport(comp *Component, astImport *ast.Import) error {
 			comp.scope.componentModelTypes = append(comp.scope.componentModelTypes, &typeImportDefinition{
 				name: astImport.ImportName,
 				typeBoundCreator: func(ctx context.Context, scope instanceScope) (bound, error) {
-					typ, err := typDef.resolveType(ctx, scope)
+					typ, err := scope.resolveType(ctx, typDef)
 					if err != nil {
 						return nil, err
 					}
@@ -347,7 +354,7 @@ func (b *Builder) buildImport(comp *Component, astImport *ast.Import) error {
 		case *ast.EqBound:
 			typDef := comp.scope.componentModelTypes[b.TypeIdx]
 			typeBoundCreator = func(ctx context.Context, scope instanceScope) (bound, error) {
-				typ, err := typDef.resolveType(ctx, scope)
+				typ, err := scope.resolveType(ctx, typDef)
 				if err != nil {
 					return nil, err
 				}
@@ -401,7 +408,7 @@ func (b *Builder) buildExport(comp *Component, astExport *ast.Export) error {
 		def := comp.scope.componentModelTypes[astExport.SortIdx.Idx]
 		comp.scope.componentModelTypes = append(comp.scope.componentModelTypes, def)
 		comp.exports[astExport.ExportName] = func(ctx context.Context, scope instanceScope) (any, error) {
-			return def.resolveType(ctx, scope)
+			return scope.resolveType(ctx, def)
 		}
 		return nil
 	case ast.SortComponent:

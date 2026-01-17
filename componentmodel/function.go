@@ -45,7 +45,7 @@ func (d *functionImportDefinition) resolveFunction(ctx context.Context, scope in
 		return nil, fmt.Errorf("import %s is not a function", d.name)
 	}
 
-	expectedType, err := d.expectedTypeDef.resolveType(ctx, scope)
+	expectedType, err := scope.resolveType(ctx, d.expectedTypeDef)
 	if err != nil {
 		return nil, err
 	}

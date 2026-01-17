@@ -460,7 +460,7 @@ func (p *Parser) parseCoreType() (*ast.CoreType, error) {
 		}
 
 		var modType ast.CoreModuleType
-		for i := uint32(0); i < nDecls; i++ {
+		for range nDecls {
 			discriminator, err := p.readByte()
 			if err != nil {
 				return nil, err
@@ -556,7 +556,9 @@ func (p *Parser) parseCoreType() (*ast.CoreType, error) {
 				return nil, fmt.Errorf("unknown core module type decl discriminator: 0x%02x", discriminator)
 			}
 		}
-		return nil, fmt.Errorf("core module type parsing not yet implemented")
+		return &ast.CoreType{
+			DefType: &modType,
+		}, nil
 
 	default:
 		subtype, err := p.parseSubType()
@@ -1118,7 +1120,7 @@ func (p *Parser) parseInstantiateArg() (ast.InstantiateArg, error) {
 }
 
 func (p *Parser) parseInlineExport() (ast.InlineExport, error) {
-	name, err := p.readName()
+	name, err := p.readExportName()
 	if err != nil {
 		return ast.InlineExport{}, err
 	}
@@ -2036,11 +2038,6 @@ func (p *Parser) parseImport() (*ast.Import, error) {
 		return nil, fmt.Errorf("failed to parse extern desc: %w", err)
 	}
 
-	// Validate that component imports are not allowed at root level
-	if sortDesc, ok := externDesc.(*ast.SortExternDesc); ok && sortDesc.Sort == ast.SortComponent {
-		return nil, fmt.Errorf("root-level component imports are not supported")
-	}
-
 	return &ast.Import{
 		ImportName: name,
 		Desc:       externDesc,
@@ -2076,7 +2073,25 @@ func (p *Parser) parseExport() (*ast.Export, error) {
 	// Read sortidx
 	sortIdx, err := p.parseSortIdx()
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse sortidx: %w", err)
+		return nil, fmt.Errorf("failed to parse sortidx: %w for export %s", err, name)
+	}
+
+	hasExternDesc, err := p.readByte()
+	if err != nil {
+		return nil, fmt.Errorf("failed to peek byte: %w", err)
+	}
+
+	var externDesc ast.ExternDesc
+	switch hasExternDesc {
+	case 0x00:
+		// No extern desc, proceed
+	case 0x01:
+		externDesc, err = p.parseExternDesc()
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse extern desc: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("invalid extern desc presence byte: 0x%02x", hasExternDesc)
 	}
 
 	// Check if exporting a component from root level (not supported)
@@ -2087,6 +2102,7 @@ func (p *Parser) parseExport() (*ast.Export, error) {
 	return &ast.Export{
 		ExportName: name,
 		SortIdx:    sortIdx,
+		ExternDesc: externDesc,
 	}, nil
 }
 
@@ -2385,7 +2401,7 @@ func (p *Parser) readVec(readElement func() error) error {
 	if err != nil {
 		return fmt.Errorf("failed to read vector count: %w", err)
 	}
-	for i := uint32(0); i < count; i++ {
+	for i := range count {
 		if err := readElement(); err != nil {
 			return fmt.Errorf("failed to read vector element %d: %w", i, err)
 		}

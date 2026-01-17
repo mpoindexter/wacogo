@@ -29,6 +29,7 @@ type instanceScope interface {
 	resolveInstance(ctx context.Context, idx uint32) (*Instance, error)
 	resolveCoreInstance(ctx context.Context, idx uint32) (*coreInstance, error)
 	resolveArgument(name string) (any, error)
+	resolveType(ctx context.Context, def componentModelTypeDefinition) (Type, error)
 	runtime() wazero.Runtime
 }
 
@@ -257,7 +258,7 @@ func resolveSortIdx(ctx context.Context, scope instanceScope, sortIdx *ast.SortI
 		if err != nil {
 			return nil, err
 		}
-		return def.resolveType(ctx, scope)
+		return scope.resolveType(ctx, def)
 	case ast.SortComponent:
 		def, err := scope.resolveComponentDefinition(0, sortIdx.Idx)
 		if err != nil {

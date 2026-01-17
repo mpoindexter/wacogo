@@ -152,7 +152,7 @@ func (d *instanceImportDefinition) resolveInstance(ctx context.Context, scope in
 	if !ok {
 		return nil, fmt.Errorf("import %s is not an instance", d.name)
 	}
-	expectedType, err := d.expectedTypeDef.resolveType(ctx, scope)
+	expectedType, err := scope.resolveType(ctx, d.expectedTypeDef)
 	if err != nil {
 		return nil, err
 	}

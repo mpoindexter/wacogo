@@ -1,5 +1,7 @@
 package ast
 
+import "fmt"
+
 // Component represents the top-level component structure
 type Component struct {
 	Definitions []Definition
@@ -139,6 +141,35 @@ const (
 	SortComponent
 	SortInstance
 )
+
+func (s Sort) String() string {
+	switch s {
+	case SortCoreFunc:
+		return "core func"
+	case SortCoreTable:
+		return "core table"
+	case SortCoreMemory:
+		return "core memory"
+	case SortCoreGlobal:
+		return "core global"
+	case SortCoreType:
+		return "core type"
+	case SortCoreModule:
+		return "core module"
+	case SortCoreInstance:
+		return "core instance"
+	case SortFunc:
+		return "func"
+	case SortType:
+		return "type"
+	case SortComponent:
+		return "component"
+	case SortInstance:
+		return "instance"
+	default:
+		return fmt.Sprintf("unknown - %v", int(s))
+	}
+}
 
 // InlineExport represents an inline export definition
 type InlineExport struct {
@@ -752,6 +783,7 @@ func (*Import) isDefinition() {}
 type Export struct {
 	ExportName string
 	SortIdx    SortIdx
+	ExternDesc ExternDesc
 }
 
 func (*Export) isDefinition() {}

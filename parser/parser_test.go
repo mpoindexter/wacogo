@@ -158,14 +158,6 @@ func TestBasicComponent(t *testing.T) {
 			).Match,
 		},
 		{
-			Name: "root level import prohibited",
-			WAT: `
-			(component
-    		(import "a" (component))
-  		)`,
-			ExpectedErr: "root-level component imports are not supported",
-		},
-		{
 			Name: "root level export prohibited",
 			WAT: `
 			(component

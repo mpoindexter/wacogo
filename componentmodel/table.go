@@ -1,5 +1,7 @@
 package componentmodel
 
+import "fmt"
+
 const maxTableSize = 1 << 28
 
 type table[T any] struct {
@@ -44,7 +46,7 @@ func (t *table[T]) get(idx uint32) T {
 	}
 	entry := t.entries[idx]
 	if !entry.set {
-		panic("table entry not set")
+		panic(fmt.Sprintf("unknown handle index %d", idx))
 	}
 	return entry.value
 }
@@ -55,7 +57,7 @@ func (t *table[T]) remove(idx uint32) T {
 	}
 	entry := t.entries[idx]
 	if !entry.set {
-		panic("table entry not set")
+		panic(fmt.Sprintf("unknown handle index %d", idx))
 	}
 	v := entry.value
 	var zero T
