@@ -60,6 +60,10 @@ func main() {
 			if err != nil {
 				log.Fatalf("Failed to build component %v: %v", expr.Dump(), err)
 			}
+			_, err = c.Instantiate(ctx, nil)
+			if err != nil {
+				log.Fatalf("Failed to instantiate component %v: %v", expr.Dump(), err)
+			}
 			lastComp = c
 		case "assert_return":
 			fmt.Println("Processing assert_return expression")

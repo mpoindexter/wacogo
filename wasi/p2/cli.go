@@ -81,3 +81,55 @@ func CreateStdinInstance(
 
 	return hi
 }
+
+type TerminalInput struct{}
+
+func CreateTerminalInputInstance() *host.Instance {
+	hi := host.NewInstance()
+	hi.AddTypeExport("terminal-input", host.ResourceTypeFor[TerminalInput](hi, hi))
+	return hi
+}
+
+type TerminalOutput struct{}
+
+func CreateTerminalOutputInstance() *host.Instance {
+	hi := host.NewInstance()
+	hi.AddTypeExport("terminal-output", host.ResourceTypeFor[TerminalOutput](hi, hi))
+	return hi
+}
+
+func CreateTerminalStdinInstance(
+	terminalInputInstance *host.Instance,
+) *host.Instance {
+	hi := host.NewInstance()
+	hi.AddTypeExport("terminal-input", host.ResourceTypeFor[TerminalInput](hi, terminalInputInstance))
+
+	hi.MustAddFunction("get-terminal-stdin", func() Option[host.Own[TerminalInput]] {
+		return OptionNone[host.Own[TerminalInput]]()
+	})
+	return hi
+}
+
+func CreateTerminalStdoutInstance(
+	terminalOutputInstance *host.Instance,
+) *host.Instance {
+	hi := host.NewInstance()
+	hi.AddTypeExport("terminal-output", host.ResourceTypeFor[TerminalOutput](hi, terminalOutputInstance))
+
+	hi.MustAddFunction("get-terminal-stdout", func() Option[host.Own[TerminalOutput]] {
+		return OptionNone[host.Own[TerminalOutput]]()
+	})
+	return hi
+}
+
+func CreateTerminalStderrInstance(
+	terminalOutputInstance *host.Instance,
+) *host.Instance {
+	hi := host.NewInstance()
+	hi.AddTypeExport("terminal-output", host.ResourceTypeFor[TerminalOutput](hi, terminalOutputInstance))
+
+	hi.MustAddFunction("get-terminal-stderr", func() Option[host.Own[TerminalOutput]] {
+		return OptionNone[host.Own[TerminalOutput]]()
+	})
+	return hi
+}

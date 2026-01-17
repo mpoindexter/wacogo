@@ -61,5 +61,20 @@ func CreateStandardWASIInstances(
 	preopens := CreateFilesystemPreopensInstance(fsTypes)
 	instances["wasi:filesystem/preopens@0.2.0"] = preopens.Instance()
 
+	terminalInput := CreateTerminalInputInstance()
+	instances["wasi:cli/terminal-input@0.2.0"] = terminalInput.Instance()
+
+	terminalOutput := CreateTerminalOutputInstance()
+	instances["wasi:cli/terminal-output@0.2.0"] = terminalOutput.Instance()
+
+	terminalStdin := CreateTerminalStdinInstance(terminalInput)
+	instances["wasi:cli/terminal-stdin@0.2.0"] = terminalStdin.Instance()
+
+	terminalStdout := CreateTerminalStdoutInstance(terminalOutput)
+	instances["wasi:cli/terminal-stdout@0.2.0"] = terminalStdout.Instance()
+
+	terminalStderr := CreateTerminalStderrInstance(terminalOutput)
+	instances["wasi:cli/terminal-stderr@0.2.0"] = terminalStderr.Instance()
+
 	return instances, nil
 }

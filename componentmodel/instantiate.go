@@ -3,6 +3,8 @@ package componentmodel
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/tetratelabs/wazero"
 )
@@ -40,11 +42,48 @@ func (i *instantiation) currentInstance() *Instance {
 }
 
 func (i *instantiation) resolveArgument(name string) (any, error) {
+	// Exact match check
 	val, ok := i.args[name]
-	if !ok {
-		return nil, fmt.Errorf("argument %s not found", name)
+	if ok {
+		return val, nil
 	}
-	return val, nil
+
+	var matchPrefix string
+	if iface, version, ok := strings.Cut(name, "@"); ok {
+		versionParts := strings.Split(version, ".")
+		if len(versionParts) == 3 {
+			major := versionParts[0]
+			minor := versionParts[1]
+			patch := versionParts[2]
+			majorNum, err := strconv.ParseUint(major, 10, 64)
+			if err == nil {
+				if majorNum > 0 {
+					matchPrefix = fmt.Sprintf("%s@%d.", iface, majorNum)
+				} else {
+					minorNum, err := strconv.ParseUint(minor, 10, 64)
+					if err == nil {
+						if minorNum > 0 {
+							matchPrefix = fmt.Sprintf("%s@%d.%d.", iface, majorNum, minorNum)
+						} else {
+							if patchNum, _, ok := strings.Cut(patch, "-"); ok {
+								matchPrefix = fmt.Sprintf("%s@%d.%d.%s", iface, majorNum, minorNum, patchNum)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if matchPrefix != "" {
+		for argName, argVal := range i.args {
+			if strings.HasPrefix(argName, matchPrefix) {
+				return argVal, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("argument %s not found", name)
 }
 
 func (i *instantiation) runtime() wazero.Runtime {

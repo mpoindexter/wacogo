@@ -79,7 +79,7 @@ func main() {
 	personInstance.AddFunction("[method]person.get-name", func(self host.Borrow[*Person]) string {
 		return self.Resource().Name
 	})
-	args["example:gocomponent/people"] = personInstance.Instance()
+	args["example:people/people"] = personInstance.Instance()
 
 	compInst, err := modelComp.Instantiate(context.Background(), args)
 	if err != nil {
@@ -87,9 +87,9 @@ func main() {
 	}
 	fmt.Println("Component instantiated successfully:", compInst)
 
-	greetComp, ok := compInst.Export("example:gocomponent/greet")
+	greetComp, ok := compInst.Export("example:people/greet")
 	if !ok {
-		log.Fatalf("Export 'example:gocomponent/greet' not found")
+		log.Fatalf("Export 'example:people/greet' not found")
 	}
 
 	greetAllFunc, ok := greetComp.(*componentmodel.Instance).Export("greet-all")
