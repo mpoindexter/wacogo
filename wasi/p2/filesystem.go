@@ -104,8 +104,8 @@ type NewTimestamp host.Variant[NewTimestamp]
 func (NewTimestamp) ValueType(inst *host.Instance) componentmodel.ValueType {
 	return host.VariantType(
 		inst,
-		host.VariantCase[NewTimestamp](NewTimestampNoChange),
-		host.VariantCase[NewTimestamp](NewTimestampNow),
+		host.VariantCase(NewTimestampNoChange),
+		host.VariantCase(NewTimestampNow),
 		host.VariantCaseValue(NewTimestampTimestamp),
 	)
 }
@@ -130,15 +130,15 @@ func (v NewTimestamp) Now() bool {
 	return host.VariantTest(v, "now")
 }
 
-func NewTimestampTimestamp(timestamp componentmodel.U64) NewTimestamp {
+func NewTimestampTimestamp(timestamp DateTime) NewTimestamp {
 	return host.VariantConstructValue[NewTimestamp](
 		"timestamp",
 		timestamp,
 	)
 }
 
-func (v NewTimestamp) Timestamp() (componentmodel.U64, bool) {
-	return host.VariantCast[componentmodel.U64](v, "timestamp")
+func (v NewTimestamp) Timestamp() (DateTime, bool) {
+	return host.VariantCast[DateTime](v, "timestamp")
 }
 
 type DescriptorStat host.Record[DescriptorStat]

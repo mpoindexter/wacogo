@@ -49,3 +49,19 @@ func CreateInsecureRandomInstance() *host.Instance {
 	})
 	return hi
 }
+
+func CreateInsecureSeedInstance() *host.Instance {
+	hi := host.NewInstance()
+	hi.AddFunction("insecure-seed", func() Tuple2[componentmodel.U64, componentmodel.U64] {
+		var bytes [16]byte
+		_, err := rand.Read(bytes[:])
+		if err != nil {
+			panic("failed to read random u64: " + err.Error())
+		}
+		return NewTuple2(
+			componentmodel.U64(binary.LittleEndian.Uint64(bytes[:8])),
+			componentmodel.U64(binary.LittleEndian.Uint64(bytes[8:])),
+		)
+	})
+	return hi
+}

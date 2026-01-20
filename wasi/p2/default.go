@@ -19,6 +19,9 @@ func CreateStandardWASIInstances(
 	cliInstance := CreateEnvironmentInstance(environment, args, initialCwd)
 	instances["wasi:cli/environment@0.2.0"] = cliInstance.Instance()
 
+	exitInstance := CreateExitInstance()
+	instances["wasi:cli/exit@0.2.0"] = exitInstance.Instance()
+
 	errorInstance := CreateErrorInstance()
 	instances["wasi:io/error@0.2.0"] = errorInstance.Instance()
 
@@ -44,7 +47,10 @@ func CreateStandardWASIInstances(
 	instances["wasi:random/random@0.2.0"] = randomInstance.Instance()
 
 	insecureRandomInstance := CreateInsecureRandomInstance()
-	instances["wasi:random/insecure-random@0.2.0"] = insecureRandomInstance.Instance()
+	instances["wasi:random/insecure@0.2.0"] = insecureRandomInstance.Instance()
+
+	insecureSeedInstance := CreateInsecureSeedInstance()
+	instances["wasi:random/insecure-seed@0.2.0"] = insecureSeedInstance.Instance()
 
 	monotonicClockInstance := CreateMonotonicClockInstance(pollInstance)
 	instances["wasi:clocks/monotonic-clock@0.2.0"] = monotonicClockInstance.Instance()
@@ -76,5 +82,43 @@ func CreateStandardWASIInstances(
 	terminalStderr := CreateTerminalStderrInstance(terminalOutput)
 	instances["wasi:cli/terminal-stderr@0.2.0"] = terminalStderr.Instance()
 
+	networkInstance := CreateNetworkInstance()
+	instances["wasi:sockets/network@0.2.0"] = networkInstance.Instance()
+
+	ipNameLookupInstance := CreateIpNameLookupInstance(
+		networkInstance,
+		pollInstance,
+	)
+	instances["wasi:sockets/ip-name-lookup@0.2.0"] = ipNameLookupInstance.Instance()
+
+	tcpInstance := CreateTcpInstance(
+		streamsInstance,
+		pollInstance,
+		networkInstance,
+	)
+	instances["wasi:sockets/tcp@0.2.0"] = tcpInstance.Instance()
+
+	udpInstance := CreateUdpInstance(
+		pollInstance,
+		networkInstance,
+	)
+	instances["wasi:sockets/udp@0.2.0"] = udpInstance.Instance()
+
+	tcpCreateSocketInstance := CreateTcpCreateSocketInstance(
+		networkInstance,
+		tcpInstance,
+	)
+	instances["wasi:sockets/tcp-create-socket@0.2.0"] = tcpCreateSocketInstance.Instance()
+
+	udpCreateSocketInstance := CreateUdpCreateSocketInstance(
+		networkInstance,
+		udpInstance,
+	)
+	instances["wasi:sockets/udp-create-socket@0.2.0"] = udpCreateSocketInstance.Instance()
+
+	instanceNetworkInstance := CreateInstanceNetworkInstance(
+		networkInstance,
+	)
+	instances["wasi:sockets/instance-network@0.2.0"] = instanceNetworkInstance.Instance()
 	return instances, nil
 }

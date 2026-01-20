@@ -133,3 +133,23 @@ func CreateTerminalStderrInstance(
 	})
 	return hi
 }
+
+func CreateExitInstance() *host.Instance {
+	hi := host.NewInstance()
+	hi.MustAddFunction("exit", func(status Result[Void, Void]) {
+		panic(&ExitError{Status: status})
+	})
+	return hi
+}
+
+type ExitError struct {
+	Status Result[Void, Void]
+}
+
+func (e *ExitError) Error() string {
+	if _, ok := e.Status.Ok(); ok {
+		return "process exited with success"
+	}
+
+	return "process exited with failure"
+}

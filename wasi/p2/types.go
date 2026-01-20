@@ -105,3 +105,32 @@ func (t Tuple2[A, B]) A() A {
 func (t Tuple2[A, B]) B() B {
 	return host.RecordFieldGetIndex[B](t, 1)
 }
+
+type Tuple3[A, B, C any] host.Record[Tuple3[A, B, C]]
+
+func (Tuple3[A, B, C]) ValueType(inst *host.Instance) componentmodel.ValueType {
+	return host.RecordType[Tuple3[A, B, C]](
+		inst,
+		NewTuple3[A, B, C],
+	)
+}
+
+func NewTuple3[A, B, C any](a A, b B, c C) Tuple3[A, B, C] {
+	return host.RecordConstruct[Tuple3[A, B, C]](
+		host.RecordField("", a),
+		host.RecordField("", b),
+		host.RecordField("", c),
+	)
+}
+
+func (t Tuple3[A, B, C]) A() A {
+	return host.RecordFieldGetIndex[A](t, 0)
+}
+
+func (t Tuple3[A, B, C]) B() B {
+	return host.RecordFieldGetIndex[B](t, 1)
+}
+
+func (t Tuple3[A, B, C]) C() C {
+	return host.RecordFieldGetIndex[C](t, 2)
+}

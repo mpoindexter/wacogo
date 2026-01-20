@@ -50,12 +50,14 @@ func main() {
 	defer runtime.Close(ctx)
 
 	// Build the model
+	fmt.Println("Building component model...")
 	builder := componentmodel.NewBuilder(runtime)
 	modelComp, err := builder.Build(ctx, comp)
 	if err != nil {
 		log.Fatalf("Failed to build model: %v", err)
 	}
 
+	fmt.Println("Creating WASI instances...")
 	wasiInstances, err := p2.CreateStandardWASIInstances(
 		bytes.NewBuffer(nil),
 		os.Stdout,
@@ -81,6 +83,7 @@ func main() {
 	})
 	args["example:people/people"] = personInstance.Instance()
 
+	fmt.Println("Creating component instance...")
 	compInst, err := modelComp.Instantiate(context.Background(), args)
 	if err != nil {
 		log.Fatalf("Failed to instantiate model: %v", err)
