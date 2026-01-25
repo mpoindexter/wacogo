@@ -12,8 +12,9 @@ type Convertable interface {
 }
 
 type callContext struct {
-	instance *Instance
-	cleanups []func()
+	instance     *componentmodel.Instance
+	hostInstance *Instance
+	cleanups     []func()
 }
 
 type converter interface {
@@ -53,7 +54,7 @@ func (hc *ownHandleConverter) toHost(cc *callContext, v componentmodel.Value) an
 	mv := v.(interface {
 		Move(*componentmodel.Instance) (componentmodel.ResourceHandle, error)
 	})
-	tgtHandle, err := mv.Move(cc.instance.instance)
+	tgtHandle, err := mv.Move(cc.instance)
 	if err != nil {
 		panic("failed to move resource handle during conversion to host")
 	}
@@ -70,8 +71,8 @@ func (hc *ownHandleConverter) toHost(cc *callContext, v componentmodel.Value) an
 func (hc *ownHandleConverter) fromHost(cc *callContext, v any) componentmodel.Value {
 	inst := reflect.ValueOf(v).Convert(reflect.TypeFor[ownImpl]()).Interface().(ownImpl)
 	inst.data.dropped = true
-	rt := cc.instance.resourceTypes[hc.resourceType]
-	return componentmodel.NewResourceHandle(cc.instance.instance, rt, inst.data.lease.resource())
+	rt := cc.hostInstance.resourceTypes[hc.resourceType]
+	return componentmodel.NewResourceHandle(cc.instance, rt, inst.data.lease.resource())
 }
 
 type borrowHandleConverter struct {
@@ -98,7 +99,7 @@ func (hc *borrowHandleConverter) toHost(cc *callContext, v componentmodel.Value)
 
 func (hc *borrowHandleConverter) fromHost(cc *callContext, v any) componentmodel.Value {
 	inst := reflect.ValueOf(v).Convert(reflect.TypeFor[borrowImpl]()).Interface().(borrowImpl)
-	rt := cc.instance.resourceTypes[hc.resourceType]
+	rt := cc.hostInstance.resourceTypes[hc.resourceType]
 	h := componentmodel.NewBorrowedHandle(rt, inst.data.lease.resource(), func() {
 		inst.data.lease.release()
 	})

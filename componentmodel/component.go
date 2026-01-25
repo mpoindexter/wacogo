@@ -8,113 +8,151 @@ import (
 )
 
 type Component struct {
-	id      string
-	runtime wazero.Runtime
-	scope   componentDefinitionScope
-	exports map[string]func(ctx context.Context, scope instanceScope) (any, error)
+	id          string
+	runtime     wazero.Runtime
+	scope       *definitionScope
+	importTypes map[string]Type
+	exports     map[string]componentExport
 }
 
-func newComponent(id string, runtime wazero.Runtime, parent definitionScope) *Component {
+func newComponent(id string, runtime wazero.Runtime, parent *definitionScope) *Component {
 	return &Component{
-		id:      id,
-		runtime: runtime,
-		scope:   componentDefinitionScope{parent: parent},
-		exports: make(map[string]func(ctx context.Context, scope instanceScope) (any, error)),
+		id:          id,
+		runtime:     runtime,
+		scope:       newDefinitionScope(parent),
+		exports:     make(map[string]componentExport),
+		importTypes: make(map[string]Type),
 	}
 }
 
 func (c *Component) Instantiate(ctx context.Context, args map[string]any) (*Instance, error) {
-	return c.instantiate(ctx, args, nil)
+	instanceArgs := make(map[string]*instanceArgument, len(args))
+	for name, val := range args {
+		switch v := val.(type) {
+		case *Instance:
+			instanceArgs[name] = &instanceArgument{val: v, typ: v.typ()}
+		default:
+			return nil, fmt.Errorf("unsupported argument type for %s: %T", name, val)
+		}
+	}
+	return c.instantiate(ctx, instanceArgs, nil)
 }
 
-func (c *Component) instantiate(ctx context.Context, args map[string]any, parentScope instanceScope) (*Instance, error) {
-	instantiation := newInstantiation(parentScope, c, args)
+func (c *Component) instantiate(ctx context.Context, args map[string]*instanceArgument, parentScope *instanceScope) (*Instance, error) {
+	instance := newInstance()
+	instantiation := newInstanceScope(parentScope, c.scope, instance, c.runtime, args)
 
-	for i := range c.scope.coreInstances {
-		_, err := instantiation.resolveCoreInstance(ctx, uint32(i))
+	coreInstanceDefs := defs(c.scope, sortCoreInstance)
+	for i := range coreInstanceDefs.iterator() {
+		_, err := resolve(ctx, instantiation, sortCoreInstance, uint32(i))
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	for i := range c.scope.instances {
-		_, err := instantiation.resolveInstance(ctx, uint32(i))
+	instanceDefs := defs(c.scope, sortInstance)
+	for i := range instanceDefs.iterator() {
+		_, err := resolve(ctx, instantiation, sortInstance, uint32(i))
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	for exportName, exportFunc := range c.exports {
-		val, err := exportFunc(ctx, instantiation)
+	for exportName, export := range c.exports {
+		val, err := export.resolve(ctx, instantiation)
 		if err != nil {
 			return nil, fmt.Errorf("failed to instantiate export %s: %v", exportName, err)
 		}
-		instantiation.instance.exports[exportName] = val
+		instance.exports[exportName] = val
 	}
 
-	return instantiation.instance, nil
+	return instance, nil
 }
 
-type componentDefinition interface {
-	resolveComponent(ctx context.Context, scope instanceScope) (*Component, error)
+func (c *Component) typ() *componentType {
+	exportTypes := make(map[string]Type, len(c.exports))
+	for name, export := range c.exports {
+		exportTypes[name] = export.typ()
+	}
+	return newComponentType(c.importTypes, exportTypes)
 }
 
-type componentAliasDefinition struct {
-	instanceIdx uint32
-	exportName  string
+type componentExport interface {
+	typ() Type
+	resolve(ctx context.Context, scope *instanceScope) (any, error)
 }
 
-func (d *componentAliasDefinition) resolveComponent(ctx context.Context, scope instanceScope) (*Component, error) {
-	aliasInst, err := scope.resolveInstance(ctx, d.instanceIdx)
-	if err != nil {
-		return nil, err
-	}
-	compVal, ok := aliasInst.exports[d.exportName]
-	if !ok {
-		return nil, fmt.Errorf("export %s not found in instance %d", d.exportName, d.instanceIdx)
-	}
-	comp, ok := compVal.(*Component)
-	if !ok {
-		return nil, fmt.Errorf("export %s in instance %d is not a component", d.exportName, d.instanceIdx)
-	}
-	return comp, nil
+type defComponentExport[T resolvedInstance[TT], TT Type] struct {
+	sort       sort[T, TT]
+	idx        uint32
+	exportType TT
+}
+
+func newDefComponentExport[T resolvedInstance[TT], TT Type](sort sort[T, TT], idx uint32, typ TT) *defComponentExport[T, TT] {
+	return &defComponentExport[T, TT]{sort: sort, idx: idx, exportType: typ}
+}
+
+func (e *defComponentExport[T, TT]) typ() Type {
+	return e.exportType
+}
+
+func (e *defComponentExport[T, TT]) resolve(ctx context.Context, scope *instanceScope) (any, error) {
+	return resolve(ctx, scope, e.sort, e.idx)
 }
 
 type componentStaticDefinition struct {
 	component *Component
 }
 
-func (d *componentStaticDefinition) resolveComponent(ctx context.Context, scope instanceScope) (*Component, error) {
+func newComponentStaticDefinition(component *Component) *componentStaticDefinition {
+	return &componentStaticDefinition{
+		component: component,
+	}
+}
+
+func (d *componentStaticDefinition) typ() *componentType {
+	return d.component.typ()
+}
+
+func (d *componentStaticDefinition) resolve(ctx context.Context, scope *instanceScope) (*Component, error) {
 	return d.component, nil
 }
 
-type componentImportDefinition struct {
-	name            string
-	expectedTypeDef componentModelTypeDefinition
+type componentType struct {
+	imports map[string]Type
+	exports map[string]Type
 }
 
-func (d *componentImportDefinition) resolveComponent(ctx context.Context, scope instanceScope) (*Component, error) {
-	val, err := scope.resolveArgument(d.name)
-	if err != nil {
-		return nil, err
+func newComponentType(imports map[string]Type, exports map[string]Type) *componentType {
+	return &componentType{
+		imports: imports,
+		exports: exports,
 	}
-	comp, ok := val.(*Component)
+}
+
+func (ct *componentType) typ() Type {
+	return ct
+}
+
+func (ct *componentType) assignableFrom(other Type) bool {
+	otherCt, ok := other.(*componentType)
 	if !ok {
-		return nil, fmt.Errorf("import %s is not a component", d.name)
+		return false
+	}
+	// assignable if the other type does not have any imports that are not in this type
+	for name, importType := range otherCt.imports {
+		thisImportType, ok := ct.imports[name]
+		if !ok || !importType.assignableFrom(thisImportType) {
+			return false
+		}
 	}
 
-	expectedType, err := scope.resolveType(ctx, d.expectedTypeDef)
-	if err != nil {
-		return nil, err
+	// and all exports in this type are present in the other type
+	for name, exportType := range ct.exports {
+		otherExportType, ok := otherCt.exports[name]
+		if !ok || !exportType.assignableFrom(otherExportType) {
+			return false
+		}
 	}
-
-	componentType, ok := expectedType.(*componentType)
-	if !ok {
-		return nil, fmt.Errorf("expected type for component import %s is not a component type", d.name)
-	}
-
-	if err := componentType.validateComponent(comp); err != nil {
-		return nil, fmt.Errorf("component import %s does not match expected type: %w", d.name, err)
-	}
-	return comp, nil
+	return true
 }

@@ -32,64 +32,68 @@ const (
 	stringEncodingLatin1UTF16
 )
 
-func canonLower(comp *Component, astDef *ast.CanonLower) (coreFunctionDefinition, error) {
-	id := fmt.Sprintf("canon_lower_%s_fn_%d", comp.id, len(comp.scope.coreFunctions))
+func canonLower(comp *Component, astDef *ast.CanonLower) (definition[*coreFunction, *coreFunctionType], error) {
+	id := fmt.Sprintf("canon_lower_%s_fn_%d", comp.id, defs(comp.scope, sortCoreFunction).len())
+	fnDef, err := defs(comp.scope, sortFunction).get(astDef.FuncIdx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve function for canon lower: %w", err)
+	}
+	fnType := fnDef.typ()
 	return &coreFunctionLoweredDefinition{
 		id:     id,
 		astDef: astDef,
+		fnType: fnType,
 	}, nil
 }
 
 type coreFunctionLoweredDefinition struct {
 	id     string
 	astDef *ast.CanonLower
+	fnType *FunctionType
 }
 
-func (d *coreFunctionLoweredDefinition) resolveCoreFunction(ctx context.Context, scope instanceScope) (api.Module, string, api.FunctionDefinition, error) {
-	fnDef, err := scope.resolveFunctionDefinition(0, d.astDef.FuncIdx)
+func newCoreFunctionLoweredDefinition(id string, astDef *ast.CanonLower, fnType *FunctionType) *coreFunctionLoweredDefinition {
+	return &coreFunctionLoweredDefinition{
+		id:     id,
+		astDef: astDef,
+		fnType: fnType,
+	}
+}
+
+func (d *coreFunctionLoweredDefinition) typ() *coreFunctionType {
+	flatParamTypes, flatResultTypes, _, _ := d.coreFunctionTypes(d.fnType)
+	paramTypes := make([]Type, len(flatParamTypes))
+	for i, vt := range flatParamTypes {
+		paramTypes[i] = coreTypeWasmConstTypeFromWazero(vt)
+	}
+	resultTypes := make([]Type, len(flatResultTypes))
+	for i, vt := range flatResultTypes {
+		resultTypes[i] = coreTypeWasmConstTypeFromWazero(vt)
+	}
+	return newCoreFunctionType(paramTypes, resultTypes)
+}
+
+func (d *coreFunctionLoweredDefinition) resolve(ctx context.Context, scope *instanceScope) (*coreFunction, error) {
+	fn, err := resolve(ctx, scope, sortFunction, d.astDef.FuncIdx)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to resolve function for canon lower: %w", err)
-	}
-	fn, err := fnDef.resolveFunction(ctx, scope)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to resolve function for canon lower: %w", err)
+		return nil, fmt.Errorf("failed to resolve function for canon lower: %w", err)
 	}
 
-	var flatParamTypes []api.ValueType
-	var flatResultTypes []api.ValueType
+	fnTyp := fn.typ()
 
-	for _, p := range fn.typ.ParamTypes {
-		flatParamTypes = append(flatParamTypes, p.flatTypes()...)
-	}
-
-	if fn.typ.ResultType != nil {
-		flatResultTypes = append(flatResultTypes, fn.typ.ResultType.flatTypes()...)
-	}
-
-	paramsFlat := true
-	if len(flatParamTypes) > maxFlatParams {
-		paramsFlat = false
-		flatParamTypes = []api.ValueType{api.ValueTypeI32}
-	}
-
-	returnFlat := true
-	if len(flatResultTypes) > maxFlatResults {
-		returnFlat = false
-		flatParamTypes = append(flatParamTypes, api.ValueTypeI32)
-		flatResultTypes = []api.ValueType{}
-	}
+	flatParamTypes, flatResultTypes, paramsFlat, returnFlat := d.coreFunctionTypes(fnTyp)
 
 	// Check if memory/realloc are needed and provided
 	needsMemory := !paramsFlat || !returnFlat
-	if slices.ContainsFunc(fn.typ.ParamTypes, typeNeedsMemory) {
+	if slices.ContainsFunc(fnTyp.Parameters, parameterNeedsMemory) {
 		needsMemory = true
 	}
-	if fn.typ.ResultType != nil && typeNeedsMemory(fn.typ.ResultType) {
+	if fnTyp.ResultType != nil && typeNeedsMemory(fnTyp.ResultType) {
 		needsMemory = true
 	}
 
 	needsRealloc := false
-	if fn.typ.ResultType != nil && typeNeedsRealloc(fn.typ.ResultType) {
+	if fnTyp.ResultType != nil && typeNeedsRealloc(fnTyp.ResultType) {
 		needsRealloc = true
 	}
 
@@ -105,10 +109,10 @@ func (d *coreFunctionLoweredDefinition) resolveCoreFunction(ctx context.Context,
 	}
 
 	if err := validateCanonicalABIOptions(hasMemory, hasRealloc, needsMemory, needsRealloc); err != nil {
-		return nil, "", nil, fmt.Errorf("canon lower validation failed: %w", err)
+		return nil, fmt.Errorf("canon lower validation failed: %w", err)
 	}
 
-	mod, err := scope.runtime().NewHostModuleBuilder(d.id).NewFunctionBuilder().
+	mod, err := scope.runtime.NewHostModuleBuilder(d.id).NewFunctionBuilder().
 		WithGoModuleFunction(
 			api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
 				llc, err := newLiftLoadContext(ctx, d.astDef.Options, scope)
@@ -126,9 +130,9 @@ func (d *coreFunctionLoweredDefinition) resolveCoreFunction(ctx context.Context,
 				var paramValues []Value
 				if paramsFlat {
 
-					paramValues = make([]Value, 0, len(fn.typ.ParamTypes))
-					for i, pType := range fn.typ.ParamTypes {
-						val, err := pType.liftFlat(llc, itr)
+					paramValues = make([]Value, 0, len(fnTyp.Parameters))
+					for i, pType := range fnTyp.Parameters {
+						val, err := pType.Type.liftFlat(llc, itr)
 						if err != nil {
 							panic(fmt.Errorf("failed to load parameter %d for canon lower: %w", i, err))
 						}
@@ -136,7 +140,11 @@ func (d *coreFunctionLoweredDefinition) resolveCoreFunction(ctx context.Context,
 					}
 				} else {
 					offset := uint32(itr())
-					tt := TupleType(fn.typ.ParamTypes...)
+					paramTypes := make([]ValueType, len(fnTyp.Parameters))
+					for i, p := range fnTyp.Parameters {
+						paramTypes[i] = p.Type
+					}
+					tt := TupleType(paramTypes...)
 					tup, err := tt.load(llc, offset)
 					if err != nil {
 						panic(fmt.Errorf("failed to load parameters for canon lower: %w", err))
@@ -149,16 +157,16 @@ func (d *coreFunctionLoweredDefinition) resolveCoreFunction(ctx context.Context,
 					panic(fmt.Errorf("failed to call core function for canon lower: %w", err))
 				}
 
-				if fn.typ.ResultType != nil {
+				if fnTyp.ResultType != nil {
 					if returnFlat {
-						flatResults, err := fn.typ.ResultType.lowerFlat(llc, result)
+						flatResults, err := fnTyp.ResultType.lowerFlat(llc, result)
 						if err != nil {
 							panic(fmt.Errorf("failed to lower result for canon lower: %w", err))
 						}
 						copy(stack, flatResults)
 					} else {
 						offset := uint32(itr())
-						err := fn.typ.ResultType.store(llc, offset, result)
+						err := fnTyp.ResultType.store(llc, offset, result)
 						if err != nil {
 							panic(fmt.Errorf("failed to store result for canon lower: %w", err))
 						}
@@ -171,19 +179,48 @@ func (d *coreFunctionLoweredDefinition) resolveCoreFunction(ctx context.Context,
 		Export("stub_function").
 		Compile(ctx)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to create canon lower stub module: %w", err)
+		return nil, fmt.Errorf("failed to create canon lower stub module: %w", err)
 	}
 
-	modInst, err := scope.runtime().InstantiateModule(ctx, mod, wazero.NewModuleConfig())
+	modInst, err := scope.runtime.InstantiateModule(ctx, mod, wazero.NewModuleConfig())
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to instantiate canon lower stub module: %w", err)
+		return nil, fmt.Errorf("failed to instantiate canon lower stub module: %w", err)
 	}
 
-	return modInst, "stub_function", mod.ExportedFunctions()["stub_function"], nil
+	return newCoreFunction(
+		modInst, "stub_function", mod.ExportedFunctions()["stub_function"],
+	), nil
 }
 
-func canonResourceNew(comp *Component, astDef *ast.CanonResourceNew) (coreFunctionDefinition, error) {
-	id := fmt.Sprintf("canon_resource_new_%s_fn_%d", comp.id, len(comp.scope.coreFunctions))
+func (d *coreFunctionLoweredDefinition) coreFunctionTypes(fnType *FunctionType) ([]api.ValueType, []api.ValueType, bool, bool) {
+	var flatParamTypes []api.ValueType
+	var flatResultTypes []api.ValueType
+
+	for _, p := range fnType.Parameters {
+		flatParamTypes = append(flatParamTypes, p.Type.flatTypes()...)
+	}
+
+	if fnType.ResultType != nil {
+		flatResultTypes = append(flatResultTypes, fnType.ResultType.flatTypes()...)
+	}
+
+	paramsFlat := true
+	if len(flatParamTypes) > maxFlatParams {
+		paramsFlat = false
+		flatParamTypes = []api.ValueType{api.ValueTypeI32}
+	}
+
+	returnFlat := true
+	if len(flatResultTypes) > maxFlatResults {
+		returnFlat = false
+		flatParamTypes = append(flatParamTypes, api.ValueTypeI32)
+		flatResultTypes = []api.ValueType{}
+	}
+	return flatParamTypes, flatResultTypes, paramsFlat, returnFlat
+}
+
+func canonResourceNew(comp *Component, astDef *ast.CanonResourceNew) (definition[*coreFunction, *coreFunctionType], error) {
+	id := fmt.Sprintf("canon_resource_new_%s_fn_%d", comp.id, defs(comp.scope, sortCoreFunction).len())
 	return &coreFunctionResourceNewDefinition{
 		id:     id,
 		astDef: astDef,
@@ -195,27 +232,30 @@ type coreFunctionResourceNewDefinition struct {
 	astDef *ast.CanonResourceNew
 }
 
-func (d *coreFunctionResourceNewDefinition) resolveCoreFunction(ctx context.Context, scope instanceScope) (api.Module, string, api.FunctionDefinition, error) {
-	typeDef, err := scope.resolveComponentModelTypeDefinition(0, d.astDef.TypeIdx)
+func (d *coreFunctionResourceNewDefinition) typ() *coreFunctionType {
+	return newCoreFunctionType(
+		[]Type{coreTypeWasmConstTypeFromWazero(api.ValueTypeI32)},
+		[]Type{coreTypeWasmConstTypeFromWazero(api.ValueTypeI32)},
+	)
+}
+
+func (d *coreFunctionResourceNewDefinition) resolve(ctx context.Context, scope *instanceScope) (*coreFunction, error) {
+	resourceTypeGeneric, err := resolve(ctx, scope, sortType, d.astDef.TypeIdx)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon resource.new: %w", err)
-	}
-	resourceTypeGeneric, err := scope.resolveType(ctx, typeDef)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon resource.new: %w", err)
+		return nil, fmt.Errorf("failed to resolve resource type for canon resource.new: %w", err)
 	}
 	resourceType, ok := resourceTypeGeneric.(*ResourceType)
 	if !ok {
-		return nil, "", nil, fmt.Errorf("canon resource.new type is not a resource")
+		return nil, fmt.Errorf("canon resource.new type is not a resource")
 	}
-	if err := validateResourceTypeDefinedInComponent(resourceType, scope.currentInstance()); err != nil {
-		return nil, "", nil, fmt.Errorf("canon resource.new validation failed: %w", err)
+	if err := validateResourceTypeDefinedInComponent(resourceType, scope.currentInstance); err != nil {
+		return nil, fmt.Errorf("canon resource.new validation failed: %w", err)
 	}
-	mod, err := scope.runtime().NewHostModuleBuilder(d.id).NewFunctionBuilder().
+	mod, err := scope.runtime.NewHostModuleBuilder(d.id).NewFunctionBuilder().
 		WithGoModuleFunction(
 			api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
 				rep := uint32(stack[0])
-				instance := scope.currentInstance()
+				instance := scope.currentInstance
 				handle := NewResourceHandle(instance, resourceType, rep)
 				handleIdx := instance.loweredHandles.add(handle)
 				stack[0] = uint64(handleIdx)
@@ -226,19 +266,21 @@ func (d *coreFunctionResourceNewDefinition) resolveCoreFunction(ctx context.Cont
 		Export("stub_function").
 		Compile(ctx)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to create resource new stub module: %w", err)
+		return nil, fmt.Errorf("failed to create resource new stub module: %w", err)
 	}
 
-	modInst, err := scope.runtime().InstantiateModule(ctx, mod, wazero.NewModuleConfig())
+	modInst, err := scope.runtime.InstantiateModule(ctx, mod, wazero.NewModuleConfig())
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to instantiate resource new stub module: %w", err)
+		return nil, fmt.Errorf("failed to instantiate resource new stub module: %w", err)
 	}
 
-	return modInst, "stub_function", mod.ExportedFunctions()["stub_function"], nil
+	return newCoreFunction(
+		modInst, "stub_function", mod.ExportedFunctions()["stub_function"],
+	), nil
 }
 
-func canonResourceDrop(comp *Component, astDef *ast.CanonResourceDrop) (coreFunctionDefinition, error) {
-	id := fmt.Sprintf("canon_resource_drop_%s_fn_%d", comp.id, len(comp.scope.coreFunctions))
+func canonResourceDrop(comp *Component, astDef *ast.CanonResourceDrop) (definition[*coreFunction, *coreFunctionType], error) {
+	id := fmt.Sprintf("canon_resource_drop_%s_fn_%d", comp.id, defs(comp.scope, sortCoreFunction).len())
 	return &coreFunctionResourceDropDefinition{
 		id:     id,
 		astDef: astDef,
@@ -250,23 +292,26 @@ type coreFunctionResourceDropDefinition struct {
 	astDef *ast.CanonResourceDrop
 }
 
-func (d *coreFunctionResourceDropDefinition) resolveCoreFunction(ctx context.Context, scope instanceScope) (api.Module, string, api.FunctionDefinition, error) {
-	typeDef, err := scope.resolveComponentModelTypeDefinition(0, d.astDef.TypeIdx)
+func (d *coreFunctionResourceDropDefinition) typ() *coreFunctionType {
+	return newCoreFunctionType(
+		[]Type{coreTypeWasmConstTypeFromWazero(api.ValueTypeI32)},
+		[]Type{},
+	)
+}
+
+func (d *coreFunctionResourceDropDefinition) resolve(ctx context.Context, scope *instanceScope) (*coreFunction, error) {
+	resourceTypeGeneric, err := resolve(ctx, scope, sortType, d.astDef.TypeIdx)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon drop: %w", err)
-	}
-	resourceTypeGeneric, err := scope.resolveType(ctx, typeDef)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon drop: %w", err)
+		return nil, fmt.Errorf("failed to resolve resource type for canon drop: %w", err)
 	}
 	resourceType, ok := resourceTypeGeneric.(*ResourceType)
 	if !ok {
-		return nil, "", nil, fmt.Errorf("canon drop type is not a resource")
+		return nil, fmt.Errorf("canon drop type is not a resource")
 	}
-	mod, err := scope.runtime().NewHostModuleBuilder(d.id).NewFunctionBuilder().
+	mod, err := scope.runtime.NewHostModuleBuilder(d.id).NewFunctionBuilder().
 		WithGoModuleFunction(
 			api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
-				instance := scope.currentInstance()
+				instance := scope.currentInstance
 				resourceIdx := uint32(stack[0])
 				handle := instance.loweredHandles.remove(uint32(resourceIdx))
 				if handle.resourceType() != resourceType {
@@ -283,19 +328,21 @@ func (d *coreFunctionResourceDropDefinition) resolveCoreFunction(ctx context.Con
 		Export("stub_function").
 		Compile(ctx)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to create resource drop stub module: %w", err)
+		return nil, fmt.Errorf("failed to create resource drop stub module: %w", err)
 	}
 
-	modInst, err := scope.runtime().InstantiateModule(ctx, mod, wazero.NewModuleConfig())
+	modInst, err := scope.runtime.InstantiateModule(ctx, mod, wazero.NewModuleConfig())
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to instantiate resource drop stub module: %w", err)
+		return nil, fmt.Errorf("failed to instantiate resource drop stub module: %w", err)
 	}
 
-	return modInst, "stub_function", mod.ExportedFunctions()["stub_function"], nil
+	return newCoreFunction(
+		modInst, "stub_function", mod.ExportedFunctions()["stub_function"],
+	), nil
 }
 
-func canonResourceRep(comp *Component, astDef *ast.CanonResourceRep) (coreFunctionDefinition, error) {
-	id := fmt.Sprintf("canon_resource_rep_%s_fn_%d", comp.id, len(comp.scope.coreFunctions))
+func canonResourceRep(comp *Component, astDef *ast.CanonResourceRep) (definition[*coreFunction, *coreFunctionType], error) {
+	id := fmt.Sprintf("canon_resource_rep_%s_fn_%d", comp.id, defs(comp.scope, sortCoreFunction).len())
 	return &coreFunctionResourceRepDefinition{
 		id:     id,
 		astDef: astDef,
@@ -307,26 +354,29 @@ type coreFunctionResourceRepDefinition struct {
 	astDef *ast.CanonResourceRep
 }
 
-func (d *coreFunctionResourceRepDefinition) resolveCoreFunction(ctx context.Context, scope instanceScope) (api.Module, string, api.FunctionDefinition, error) {
-	typeDef, err := scope.resolveComponentModelTypeDefinition(0, d.astDef.TypeIdx)
+func (d *coreFunctionResourceRepDefinition) typ() *coreFunctionType {
+	return newCoreFunctionType(
+		[]Type{coreTypeWasmConstTypeFromWazero(api.ValueTypeI32)},
+		[]Type{coreTypeWasmConstTypeFromWazero(api.ValueTypeI32)},
+	)
+}
+
+func (d *coreFunctionResourceRepDefinition) resolve(ctx context.Context, scope *instanceScope) (*coreFunction, error) {
+	resourceTypeGeneric, err := resolve(ctx, scope, sortType, d.astDef.TypeIdx)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon resource.rep: %w", err)
-	}
-	resourceTypeGeneric, err := scope.resolveType(ctx, typeDef)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to resolve resource type for canon resource.rep: %w", err)
+		return nil, fmt.Errorf("failed to resolve resource type for canon resource.rep: %w", err)
 	}
 	resourceType, ok := resourceTypeGeneric.(*ResourceType)
 	if !ok {
-		return nil, "", nil, fmt.Errorf("canon resource.rep type is not a resource")
+		return nil, fmt.Errorf("canon resource.rep type is not a resource")
 	}
-	if err := validateResourceTypeDefinedInComponent(resourceType, scope.currentInstance()); err != nil {
-		return nil, "", nil, fmt.Errorf("canon resource.rep validation failed: %w", err)
+	if err := validateResourceTypeDefinedInComponent(resourceType, scope.currentInstance); err != nil {
+		return nil, fmt.Errorf("canon resource.rep validation failed: %w", err)
 	}
-	mod, err := scope.runtime().NewHostModuleBuilder(d.id).NewFunctionBuilder().
+	mod, err := scope.runtime.NewHostModuleBuilder(d.id).NewFunctionBuilder().
 		WithGoModuleFunction(
 			api.GoModuleFunc(func(ctx context.Context, mod api.Module, stack []uint64) {
-				instance := scope.currentInstance()
+				instance := scope.currentInstance
 				resourceIdx := uint32(stack[0])
 				handle := instance.loweredHandles.get(uint32(resourceIdx))
 				if handle.resourceType() != resourceType {
@@ -345,36 +395,48 @@ func (d *coreFunctionResourceRepDefinition) resolveCoreFunction(ctx context.Cont
 		Export("stub_function").
 		Compile(ctx)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to create resource drop stub module: %w", err)
+		return nil, fmt.Errorf("failed to create resource drop stub module: %w", err)
 	}
 
-	modInst, err := scope.runtime().InstantiateModule(ctx, mod, wazero.NewModuleConfig())
+	modInst, err := scope.runtime.InstantiateModule(ctx, mod, wazero.NewModuleConfig())
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to instantiate resource drop stub module: %w", err)
+		return nil, fmt.Errorf("failed to instantiate resource drop stub module: %w", err)
 	}
 
-	return modInst, "stub_function", mod.ExportedFunctions()["stub_function"], nil
+	return newCoreFunction(
+		modInst, "stub_function", mod.ExportedFunctions()["stub_function"],
+	), nil
 }
 
-func canonLift(comp *Component, astDef *ast.CanonLift) (functionDefinition, error) {
-	id := fmt.Sprintf("canon_lift_%s_fn_%d", comp.id, len(comp.scope.functions))
+func canonLift(comp *Component, astDef *ast.CanonLift) (definition[*Function, *FunctionType], error) {
+	id := fmt.Sprintf("canon_lift_%s_fn_%d", comp.id, defs(comp.scope, sortFunction).len())
+	fnTypeDef, err := defs(comp.scope, sortType).get(astDef.FunctionTypeIdx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve function type for canon lift: %w", err)
+	}
+	fnType, ok := fnTypeDef.typ().(*FunctionType)
+	if !ok {
+		return nil, fmt.Errorf("canon lift function type is not a function")
+	}
 	return &functionLiftedDefinition{
 		id:     id,
 		astDef: astDef,
+		fnType: fnType,
 	}, nil
 }
 
 type functionLiftedDefinition struct {
 	id     string
 	astDef *ast.CanonLift
+	fnType *FunctionType
 }
 
-func (d *functionLiftedDefinition) resolveFunction(ctx context.Context, scope instanceScope) (*Function, error) {
-	fnTypeDef, err := scope.resolveComponentModelTypeDefinition(0, d.astDef.FunctionTypeIdx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve function type for canon lift: %w", err)
-	}
-	fnTypeGeneric, err := scope.resolveType(ctx, fnTypeDef)
+func (d *functionLiftedDefinition) typ() *FunctionType {
+	return d.fnType
+}
+
+func (d *functionLiftedDefinition) resolve(ctx context.Context, scope *instanceScope) (*Function, error) {
+	fnTypeGeneric, err := resolve(ctx, scope, sortType, d.astDef.FunctionTypeIdx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve function type for canon lift: %w", err)
 	}
@@ -382,21 +444,16 @@ func (d *functionLiftedDefinition) resolveFunction(ctx context.Context, scope in
 	if !ok {
 		return nil, fmt.Errorf("canon lift function type is not a function")
 	}
-	coreFnDef, err := scope.resolveCoreFunctionDefinition(0, d.astDef.CoreFuncIdx)
+	coreFn, err := resolve(ctx, scope, sortCoreFunction, d.astDef.CoreFuncIdx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve core function for canon lift: %w", err)
 	}
-	module, name, _, err := coreFnDef.resolveCoreFunction(ctx, scope)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve core function for canon lift: %w", err)
-	}
-	coreFn := module.ExportedFunction(name)
 
 	var flatParamTypes []api.ValueType
 	var flatResultTypes []api.ValueType
 
-	for _, p := range fnType.ParamTypes {
-		flatParamTypes = append(flatParamTypes, p.flatTypes()...)
+	for _, p := range fnType.Parameters {
+		flatParamTypes = append(flatParamTypes, p.Type.flatTypes()...)
 	}
 
 	if fnType.ResultType != nil {
@@ -417,14 +474,14 @@ func (d *functionLiftedDefinition) resolveFunction(ctx context.Context, scope in
 
 	// Check if memory/realloc are needed and provided
 	needsMemory := !paramsFlat || !returnFlat
-	if slices.ContainsFunc(fnType.ParamTypes, typeNeedsMemory) {
+	if slices.ContainsFunc(fnType.Parameters, parameterNeedsMemory) {
 		needsMemory = true
 	}
 	if fnType.ResultType != nil && typeNeedsMemory(fnType.ResultType) {
 		needsMemory = true
 	}
 
-	needsRealloc := slices.ContainsFunc(fnType.ParamTypes, typeNeedsRealloc)
+	needsRealloc := slices.ContainsFunc(fnType.Parameters, parameterNeedsRealloc)
 
 	hasMemory := false
 	hasRealloc := false
@@ -444,7 +501,7 @@ func (d *functionLiftedDefinition) resolveFunction(ctx context.Context, scope in
 	return NewFunction(
 		fnType,
 		func(ctx context.Context, params []Value) (Value, error) {
-			inst := scope.currentInstance()
+			inst := scope.currentInstance
 			if err := inst.enter(ctx); err != nil {
 				return nil, err
 			}
@@ -457,15 +514,19 @@ func (d *functionLiftedDefinition) resolveFunction(ctx context.Context, scope in
 
 				var flatParams []uint64
 				if paramsFlat {
-					for i, pType := range fnType.ParamTypes {
-						flatVals, err := pType.lowerFlat(llc, params[i])
+					for i, pType := range fnType.Parameters {
+						flatVals, err := pType.Type.lowerFlat(llc, params[i])
 						if err != nil {
 							return nil, fmt.Errorf("failed to lower parameter %d for canon lift: %w", i, err)
 						}
 						flatParams = append(flatParams, flatVals...)
 					}
 				} else {
-					tt := TupleType(fnType.ParamTypes...)
+					paramTypes := make([]ValueType, len(fnType.Parameters))
+					for i, p := range fnType.Parameters {
+						paramTypes[i] = p.Type
+					}
+					tt := TupleType(paramTypes...)
 					offset := llc.realloc(0, 0, uint32(tt.alignment()), uint32(tt.elementSize()))
 					err := tt.store(llc, offset, &Record{fields: params})
 					if err != nil {
@@ -474,7 +535,8 @@ func (d *functionLiftedDefinition) resolveFunction(ctx context.Context, scope in
 					flatParams = []uint64{uint64(offset)}
 				}
 
-				results, err := coreFn.Call(ctx, flatParams...)
+				coreFnInst := coreFn.module.ExportedFunction(coreFn.name)
+				results, err := coreFnInst.Call(ctx, flatParams...)
 				if err != nil {
 					return nil, fmt.Errorf("failed to call core function for canon lift: %w", err)
 				}
@@ -521,9 +583,9 @@ func (d *functionLiftedDefinition) resolveFunction(ctx context.Context, scope in
 	), nil
 }
 
-func newLiftLoadContext(ctx context.Context, opts []ast.CanonOpt, scope instanceScope) (*LiftLoadContext, error) {
+func newLiftLoadContext(ctx context.Context, opts []ast.CanonOpt, scope *instanceScope) (*LiftLoadContext, error) {
 	llc := &LiftLoadContext{
-		instance: scope.currentInstance(),
+		instance: scope.currentInstance,
 		ctx:      ctx,
 	}
 
@@ -539,26 +601,17 @@ func newLiftLoadContext(ctx context.Context, opts []ast.CanonOpt, scope instance
 				llc.stringEncoding = stringEncodingLatin1UTF16
 			}
 		case *ast.MemoryOpt:
-			memDef, err := scope.resolveCoreMemoryDefinition(0, o.MemoryIdx)
+			mem, err := resolve(ctx, scope, sortCoreMemory, o.MemoryIdx)
 			if err != nil {
 				return nil, err
 			}
-
-			_, _, mem, err := memDef.resolveMemory(ctx, scope)
-			if err != nil {
-				return nil, err
-			}
-			llc.memory = mem
+			llc.memory = mem.memory
 		case *ast.ReallocOpt:
-			coreFnDef, err := scope.resolveCoreFunctionDefinition(0, o.FuncIdx)
+			coreFn, err := resolve(ctx, scope, sortCoreFunction, o.FuncIdx)
 			if err != nil {
 				return nil, err
 			}
-			mod, fnName, _, err := coreFnDef.resolveCoreFunction(ctx, scope)
-			if err != nil {
-				return nil, err
-			}
-			reallocFn := mod.ExportedFunction(fnName)
+			reallocFn := coreFn.module.ExportedFunction(coreFn.name)
 			llc.realloc = func(originalPtr, originalSize, alignment, newSize uint32) uint32 {
 				results, err := reallocFn.Call(ctx, uint64(originalPtr), uint64(originalSize), uint64(alignment), uint64(newSize))
 				if err != nil || len(results) != 1 {
@@ -567,15 +620,11 @@ func newLiftLoadContext(ctx context.Context, opts []ast.CanonOpt, scope instance
 				return uint32(results[0])
 			}
 		case *ast.PostReturnOpt:
-			coreFnDef, err := scope.resolveCoreFunctionDefinition(0, o.FuncIdx)
+			coreFn, err := resolve(ctx, scope, sortCoreFunction, o.FuncIdx)
 			if err != nil {
 				return nil, err
 			}
-			mod, fnName, _, err := coreFnDef.resolveCoreFunction(ctx, scope)
-			if err != nil {
-				return nil, err
-			}
-			postReturnFn := mod.ExportedFunction(fnName)
+			postReturnFn := coreFn.module.ExportedFunction(coreFn.name)
 			llc.postreturn = postReturnFn
 		default:
 			return nil, fmt.Errorf("unknown canon lift/load option: %T", opt)

@@ -3,6 +3,7 @@ package componentmodel
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	"github.com/partite-ai/wacogo/ast"
 	"github.com/partite-ai/wacogo/wasm"
@@ -28,10 +29,10 @@ func (b *Builder) Build(ctx context.Context, astComp *ast.Component) (*Component
 
 func (b *Builder) buildComponent(ctx context.Context, astComp *ast.Component, parent *Component) (*Component, error) {
 	var id string
-	var parentScope definitionScope
+	var parentScope *definitionScope
 	if parent != nil {
-		parentScope = &parent.scope
-		id = fmt.Sprintf("%s_%d", parent.id, len(parent.scope.components))
+		parentScope = parent.scope
+		id = fmt.Sprintf("%s_%d", parent.id, defs(parent.scope, sortComponent).len())
 	} else {
 		id = "component_0"
 	}
@@ -78,26 +79,28 @@ func (b *Builder) buildDefinition(ctx context.Context, comp *Component, astDef a
 func (b *Builder) buildCoreModule(ctx context.Context, comp *Component, astMod *ast.CoreModule) error {
 	// Compile the module using wazero
 	/*
+		TODO: delete this when either we fork wazero, or wazero supports blank import names
+
 		fixed, err := wasm.TransformBlankImportNames(astMod.Raw)
 		if err != nil {
 			return fmt.Errorf("failed to transform blank import names: %w", err)
 		}
 	*/
-	tableTypes, err := wasm.ReadTableExports(astMod.Raw)
-	if err != nil {
-		return fmt.Errorf("failed to read table exports: %w", err)
-	}
+
 	compiled, err := b.runtime.CompileModule(ctx, astMod.Raw)
 	if err != nil {
 		return fmt.Errorf("failed to compile core module: %w", err)
 	}
 
-	comp.scope.coreModules = append(comp.scope.coreModules, &coreModuleStaticDefinition{
-		coreModule: &coreModule{
-			module:     compiled,
-			tableTypes: tableTypes,
-		},
-	})
+	additionalExports, err := wasm.ReadExports(astMod.Raw)
+	if err != nil {
+		return fmt.Errorf("failed to read additional exports: %w", err)
+	}
+
+	coreModuleDefs := defs(comp.scope, sortCoreModule)
+	coreModuleDefs.add(newCoreModuleStaticDefinition(
+		newCoreModule(compiled, additionalExports),
+	))
 	return nil
 }
 
@@ -108,18 +111,29 @@ func (b *Builder) buildCoreInstance(ctx context.Context, comp *Component, astIns
 		for _, astArg := range expr.Args {
 			args[astArg.Name] = astArg.CoreInstanceIdx
 		}
-		def := &coreInstantiateDefinition{
-			moduleIndex: expr.ModuleIdx,
-			args:        args,
+		modDef, err := defs(comp.scope, sortCoreModule).get(expr.ModuleIdx)
+		if err != nil {
+			return err
 		}
-		comp.scope.coreInstances = append(comp.scope.coreInstances, def)
-		def.instanceIdx = uint32(len(comp.scope.coreInstances) - 1)
+		modType := modDef.typ()
+
+		def := newCoreInstantiateDefinition(expr.ModuleIdx, args, newCoreInstanceType(modType.exports))
+		defs(comp.scope, sortCoreInstance).add(def)
 	case *ast.CoreInlineExports:
-		def := &coreInlineExportsDefinition{
-			exports: expr.Exports,
+		exportTypes := make(map[string]Type)
+		for _, export := range expr.Exports {
+			_, typ, err := coreSortIdxDef(comp.scope, export.SortIdx)
+			if err != nil {
+				return err
+			}
+			exportTypes[export.Name] = typ
 		}
-		comp.scope.coreInstances = append(comp.scope.coreInstances, def)
-		def.instanceIdx = uint32(len(comp.scope.coreInstances) - 1)
+
+		def := newCoreInlineExportsDefinition(
+			expr.Exports,
+			newCoreInstanceType(exportTypes),
+		)
+		defs(comp.scope, sortCoreInstance).add(def)
 	default:
 		return fmt.Errorf("invalid core instance expression type: %T", astInst.Expr)
 	}
@@ -131,26 +145,36 @@ func (b *Builder) buildNestedComponent(ctx context.Context, comp *Component, ast
 	if err != nil {
 		return err
 	}
-
-	comp.scope.components = append(comp.scope.components, &componentStaticDefinition{component: nestedComp})
+	defs(comp.scope, sortComponent).add(newComponentStaticDefinition(nestedComp))
 	return nil
 }
 
 func (b *Builder) buildInstance(comp *Component, astInst *ast.Instance) error {
 	switch expr := astInst.Expr.(type) {
 	case *ast.Instantiate:
-		def := &instantiateDefinition{
-			componentIdx: expr.ComponentIdx,
-			args:         expr.Args,
+		componentDefinition, err := defs(comp.scope, sortComponent).get(expr.ComponentIdx)
+		if err != nil {
+			return err
 		}
-		comp.scope.instances = append(comp.scope.instances, def)
-		def.instanceIdx = uint32(len(comp.scope.instances) - 1)
+
+		compType := componentDefinition.typ()
+		def := newInstantiateDefinition(
+			expr.ComponentIdx,
+			expr.Args,
+			newInstanceType(compType.exports),
+		)
+		defs(comp.scope, sortInstance).add(def)
 	case *ast.InlineExports:
-		def := &inlineExportsDefinition{
-			exports: expr.Exports,
+		exportTypes := make(map[string]Type)
+		for _, export := range expr.Exports {
+			_, typ, err := sortIdxDef(comp.scope, &export.SortIdx)
+			if err != nil {
+				return err
+			}
+			exportTypes[export.Name] = typ
 		}
-		comp.scope.instances = append(comp.scope.instances, def)
-		def.instanceIdx = uint32(len(comp.scope.instances) - 1)
+		def := newInlineExportsDefinition(expr.Exports, exportTypes)
+		defs(comp.scope, sortInstance).add(def)
 	default:
 		return fmt.Errorf("invalid instance expression type: %T", astInst.Expr)
 	}
@@ -159,7 +183,7 @@ func (b *Builder) buildInstance(comp *Component, astInst *ast.Instance) error {
 
 func (b *Builder) buildAlias(comp *Component, astAlias *ast.Alias) error {
 	// Validate alias before building
-	if err := validateAlias(&comp.scope, astAlias); err != nil {
+	if err := validateAlias(comp.scope, astAlias); err != nil {
 		return err
 	}
 
@@ -178,126 +202,134 @@ func (b *Builder) buildAlias(comp *Component, astAlias *ast.Alias) error {
 func (b *Builder) buildCoreExportAlias(comp *Component, sort ast.Sort, alias *ast.CoreExportAlias) error {
 	switch sort {
 	case ast.SortCoreFunc:
-		comp.scope.coreFunctions = append(comp.scope.coreFunctions, &coreFunctionExportDefinition{
-			instanceIdx: alias.InstanceIdx,
-			funcName:    alias.Name,
-		})
-		return nil
+		return addCoreExportAliasDefinitionToScope[*coreFunction, *coreFunctionType](comp.scope, sortCoreFunction, alias.InstanceIdx, alias.Name)
 	case ast.SortCoreGlobal:
-		comp.scope.coreGlobals = append(comp.scope.coreGlobals, &coreInstanceGlobalExportDefinition{
-			instanceIdx: alias.InstanceIdx,
-			globalName:  alias.Name,
-		})
-		return nil
+		return addCoreExportAliasDefinitionToScope[*coreGlobal, *coreGlobalType](comp.scope, sortCoreGlobal, alias.InstanceIdx, alias.Name)
 	case ast.SortCoreMemory:
-		comp.scope.coreMemories = append(comp.scope.coreMemories, &coreInstanceMemoryExportDefinition{
-			instanceIdx: alias.InstanceIdx,
-			memoryName:  alias.Name,
-		})
-		return nil
+		return addCoreExportAliasDefinitionToScope[*coreMemory, *coreMemoryType](comp.scope, sortCoreMemory, alias.InstanceIdx, alias.Name)
 	case ast.SortCoreType:
 		return fmt.Errorf("core type export alias resolution not yet supported")
 	case ast.SortCoreTable:
-		comp.scope.coreTables = append(comp.scope.coreTables, &coreInstanceTableExportDefinition{
-			instanceIdx: alias.InstanceIdx,
-			tableName:   alias.Name,
-		})
-		return nil
+		return addCoreExportAliasDefinitionToScope[*coreTable, *coreTableType](comp.scope, sortCoreTable, alias.InstanceIdx, alias.Name)
 	default:
 		return fmt.Errorf("unsupported core export alias sort: %v", sort)
 	}
 }
 
+func addCoreExportAliasDefinitionToScope[T resolvedInstance[TT], TT Type](scope *definitionScope, sort sort[T, TT], instanceIdx uint32, exportName string) error {
+	instanceDef, err := defs(scope, sortCoreInstance).get(instanceIdx)
+	if err != nil {
+		return err
+	}
+	exportType, err := resolveExportType[TT](instanceDef.typ(), exportName)
+	if err != nil {
+		return err
+	}
+
+	defs(scope, sort).add(newCoreExportAliasDefinition[T, TT](instanceIdx, exportName, exportType))
+	return nil
+}
+
 func (b *Builder) buildExportAlias(comp *Component, sort ast.Sort, alias *ast.ExportAlias) error {
 	switch sort {
-	case ast.SortFunc:
-		comp.scope.functions = append(comp.scope.functions, &functionAliasDefinition{
-			instanceIdx: alias.InstanceIdx,
-			funcName:    alias.Name,
-		})
-		return nil
-	case ast.SortType:
-		comp.scope.componentModelTypes = append(comp.scope.componentModelTypes, &typeAliasDefinition{
-			instanceIdx: alias.InstanceIdx,
-			exportName:  alias.Name,
-		})
-		return nil
-	case ast.SortComponent:
-		comp.scope.components = append(comp.scope.components, &componentAliasDefinition{
-			instanceIdx: alias.InstanceIdx,
-			exportName:  alias.Name,
-		})
-		return nil
+	case ast.SortCoreFunc:
+		return addExportAliasDefinitionToScope[*coreFunction, *coreFunctionType](comp.scope, sortCoreFunction, alias.InstanceIdx, alias.Name)
+	case ast.SortCoreTable:
+		return addExportAliasDefinitionToScope[*coreTable, *coreTableType](comp.scope, sortCoreTable, alias.InstanceIdx, alias.Name)
+	case ast.SortCoreMemory:
+		return addExportAliasDefinitionToScope[*coreMemory, *coreMemoryType](comp.scope, sortCoreMemory, alias.InstanceIdx, alias.Name)
+	case ast.SortCoreGlobal:
+		return addExportAliasDefinitionToScope[*coreGlobal, *coreGlobalType](comp.scope, sortCoreGlobal, alias.InstanceIdx, alias.Name)
+	case ast.SortCoreType:
+		return addExportAliasDefinitionToScope[Type, Type](comp.scope, sortCoreType, alias.InstanceIdx, alias.Name)
 	case ast.SortCoreModule:
-		comp.scope.coreModules = append(comp.scope.coreModules, &coreModuleInstanceExportAliasDefinition{
-			instanceIdx: alias.InstanceIdx,
-			exportName:  alias.Name,
-		})
-		return nil
-	case ast.SortInstance:
-		comp.scope.instances = append(comp.scope.instances, &instanceAliasDefinition{
-			instanceIdx: alias.InstanceIdx,
-			exportName:  alias.Name,
-		})
-		return nil
+		return addExportAliasDefinitionToScope[*coreModule, *coreModuleType](comp.scope, sortCoreModule, alias.InstanceIdx, alias.Name)
 	case ast.SortCoreInstance:
-		comp.scope.coreInstances = append(comp.scope.coreInstances, &coreInstanceAliasDefinition{
-			instanceIdx: alias.InstanceIdx,
-			exportName:  alias.Name,
-		})
-		return nil
+		return addExportAliasDefinitionToScope[*coreInstance, *coreInstanceType](comp.scope, sortCoreInstance, alias.InstanceIdx, alias.Name)
+	case ast.SortFunc:
+		return addExportAliasDefinitionToScope[*Function, *FunctionType](comp.scope, sortFunction, alias.InstanceIdx, alias.Name)
+	case ast.SortType:
+		return addExportAliasDefinitionToScope[Type, Type](comp.scope, sortType, alias.InstanceIdx, alias.Name)
+	case ast.SortComponent:
+		return addExportAliasDefinitionToScope[*Component, *componentType](comp.scope, sortComponent, alias.InstanceIdx, alias.Name)
+	case ast.SortInstance:
+		return addExportAliasDefinitionToScope[*Instance, *instanceType](comp.scope, sortInstance, alias.InstanceIdx, alias.Name)
 	default:
 		return fmt.Errorf("unsupported export alias sort: %v", sort)
 	}
 }
 
+func addExportAliasDefinitionToScope[T any, TT Type](scope *definitionScope, sort sort[T, TT], instanceIdx uint32, exportName string) error {
+	instanceDef, err := defs(scope, sortInstance).get(instanceIdx)
+	if err != nil {
+		return err
+	}
+	exportType, err := resolveExportType[TT](instanceDef.typ(), exportName)
+	if err != nil {
+		return err
+	}
+
+	defs(scope, sort).add(newExportAliasDefinition(instanceIdx, exportName, sort, exportType))
+	return nil
+}
+
 func (b *Builder) buildOuterAlias(comp *Component, sort ast.Sort, alias *ast.OuterAlias) error {
+	// outer aliases are restricted to only refer to immutable definitions: non-resource types, modules and components
 	switch sort {
 	case ast.SortType:
-		typeDef, err := comp.scope.resolveComponentModelTypeDefinition(alias.Count, alias.Idx)
+		target, err := addOuterAliasDefinitionToScope(comp.scope, sortType, alias.Count, alias.Idx)
 		if err != nil {
 			return err
 		}
-		comp.scope.componentModelTypes = append(comp.scope.componentModelTypes, typeDef)
-		return nil
-	case ast.SortCoreModule:
-		coreModuleDef, err := comp.scope.resolveCoreModuleDefinition(alias.Count, alias.Idx)
-		if err != nil {
-			return err
+		switch target.typ().(type) {
+		case *subResourceType:
+			return fmt.Errorf("cannot create outer alias to resource type")
+		case *ResourceType:
+			return fmt.Errorf("cannot create outer alias to resource type")
+		default:
+			return nil
 		}
-		comp.scope.coreModules = append(comp.scope.coreModules, coreModuleDef)
-		return nil
-	case ast.SortComponent:
-		componentDef, err := comp.scope.resolveComponentDefinition(alias.Count, alias.Idx)
-		if err != nil {
-			return err
-		}
-		comp.scope.components = append(comp.scope.components, componentDef)
-		return nil
 	case ast.SortCoreType:
-		coreTypeDef, err := comp.scope.resolveCoreTypeDefinition(alias.Count, alias.Idx)
-		if err != nil {
-			return err
-		}
-		comp.scope.coreTypes = append(comp.scope.coreTypes, coreTypeDef)
-		return nil
+		_, err := addOuterAliasDefinitionToScope(comp.scope, sortCoreType, alias.Count, alias.Idx)
+		return err
+	case ast.SortCoreModule:
+		_, err := addOuterAliasDefinitionToScope(comp.scope, sortCoreModule, alias.Count, alias.Idx)
+		return err
+	case ast.SortComponent:
+		_, err := addOuterAliasDefinitionToScope(comp.scope, sortComponent, alias.Count, alias.Idx)
+		return err
 	default:
 		return fmt.Errorf("unsupported outer alias sort: %v", sort)
 	}
 }
 
+func addOuterAliasDefinitionToScope[T resolvedInstance[TT], TT Type](scope *definitionScope, sort sort[T, TT], outerIdx uint32, idx uint32) (definition[T, TT], error) {
+	outerDefs, err := nestedDefs(scope, sort, outerIdx)
+	if err != nil {
+		return nil, err
+	}
+
+	targetDef, err := outerDefs.get(idx)
+	if err != nil {
+		return nil, err
+	}
+
+	defs(scope, sort).add(newOuterAliasDefinition[T, TT](outerIdx, sort, idx, targetDef.typ()))
+	return targetDef, nil
+}
+
 func (b *Builder) buildType(comp *Component, astType *ast.Type) error {
-	def, err := astTypeToTypeDefinition(&comp.scope, astType.DefType)
+	def, err := astTypeToTypeResolver(comp.scope, astType.DefType)
 	if err != nil {
 		return err
 	}
-	comp.scope.componentModelTypes = append(comp.scope.componentModelTypes, def)
+	defs(comp.scope, sortType).add(newTypeResolverDefinition(def))
 	return nil
 }
 
 func (b *Builder) buildImport(comp *Component, astImport *ast.Import) error {
 	// Validate import
-	if err := validateImport(&comp.scope, astImport); err != nil {
+	if err := validateImport(comp.scope, astImport); err != nil {
 		return err
 	}
 
@@ -305,72 +337,80 @@ func (b *Builder) buildImport(comp *Component, astImport *ast.Import) error {
 	case *ast.SortExternDesc:
 		switch desc.Sort {
 		case ast.SortCoreModule:
-			typ := comp.scope.coreTypes[desc.TypeIdx]
-			comp.scope.coreModules = append(comp.scope.coreModules, &coreModuleImportDefinition{
-				name:            astImport.ImportName,
-				expectedTypeDef: typ,
-			})
+			typDef, err := defs(comp.scope, sortCoreType).get(desc.TypeIdx)
+			if err != nil {
+				return err
+			}
+			modType, ok := typDef.typ().(*coreModuleType)
+			if !ok {
+				return fmt.Errorf("import %s: core type index %d is not a module type", astImport.ImportName, desc.TypeIdx)
+			}
+			comp.importTypes[astImport.ImportName] = modType
+			defs(comp.scope, sortCoreModule).add(newImportDefinition[*coreModule](
+				astImport.ImportName, modType,
+			))
 			return nil
 		case ast.SortFunc:
-			typ := comp.scope.componentModelTypes[desc.TypeIdx]
-			comp.scope.functions = append(comp.scope.functions, &functionImportDefinition{
-				name:            astImport.ImportName,
-				expectedTypeDef: typ,
-			})
+			importType, err := resolveTypeIdx(comp.scope, sortFunction, desc.TypeIdx)
+			if err != nil {
+				return err
+			}
+			comp.importTypes[astImport.ImportName] = importType
+			defs(comp.scope, sortFunction).add(newImportDefinition[*Function](
+				astImport.ImportName, importType,
+			))
 			return nil
 		case ast.SortType:
-			typDef := comp.scope.componentModelTypes[desc.TypeIdx]
-			comp.scope.componentModelTypes = append(comp.scope.componentModelTypes, &typeImportDefinition{
-				name: astImport.ImportName,
-				typeBoundCreator: func(ctx context.Context, scope instanceScope) (bound, error) {
-					typ, err := scope.resolveType(ctx, typDef)
-					if err != nil {
-						return nil, err
-					}
-					return eqBound{typ: typ}, nil
-				},
-			})
+			importType, err := resolveTypeIdx[Type](comp.scope, sortType, desc.TypeIdx)
+			if err != nil {
+				return err
+			}
+			comp.importTypes[astImport.ImportName] = importType
+			defs(comp.scope, sortType).add(newImportDefinition[Type](
+				astImport.ImportName, importType,
+			))
 			return nil
 		case ast.SortComponent:
-			typ := comp.scope.componentModelTypes[desc.TypeIdx]
-			comp.scope.components = append(comp.scope.components, &componentImportDefinition{
-				name:            astImport.ImportName,
-				expectedTypeDef: typ,
-			})
+			importType, err := resolveTypeIdx(comp.scope, sortComponent, desc.TypeIdx)
+			if err != nil {
+				return err
+			}
+			comp.importTypes[astImport.ImportName] = importType
+			defs(comp.scope, sortComponent).add(newImportDefinition[*Component](
+				astImport.ImportName, importType,
+			))
 			return nil
 		case ast.SortInstance:
-			typ := comp.scope.componentModelTypes[desc.TypeIdx]
-			comp.scope.instances = append(comp.scope.instances, &instanceImportDefinition{
-				name:            astImport.ImportName,
-				expectedTypeDef: typ,
-			})
+			importType, err := resolveTypeIdx(comp.scope, sortInstance, desc.TypeIdx)
+			if err != nil {
+				return err
+			}
+			comp.importTypes[astImport.ImportName] = importType
+			defs(comp.scope, sortInstance).add(newImportDefinition[*Instance](
+				astImport.ImportName, importType,
+			))
 			return nil
 		default:
 			return fmt.Errorf("unsupported import sort: %v", desc.Sort)
 		}
 	case *ast.TypeExternDesc:
-		var typeBoundCreator func(ctx context.Context, scope instanceScope) (bound, error)
+		var importType Type
 		switch b := desc.Bound.(type) {
 		case *ast.EqBound:
-			typDef := comp.scope.componentModelTypes[b.TypeIdx]
-			typeBoundCreator = func(ctx context.Context, scope instanceScope) (bound, error) {
-				typ, err := scope.resolveType(ctx, typDef)
-				if err != nil {
-					return nil, err
-				}
-				return eqBound{typ: typ}, nil
+			typDef, err := defs(comp.scope, sortType).get(b.TypeIdx)
+			if err != nil {
+				return err
 			}
+			importType = typDef.typ()
 		case *ast.SubResourceBound:
-			typeBoundCreator = func(ctx context.Context, scope instanceScope) (bound, error) {
-				return subResourceBound{}, nil
-			}
+			importType = &subResourceType{}
 		default:
 			return fmt.Errorf("unsupported type bound in type import: %T", b)
 		}
-		comp.scope.componentModelTypes = append(comp.scope.componentModelTypes, &typeImportDefinition{
-			name:             astImport.ImportName,
-			typeBoundCreator: typeBoundCreator,
-		})
+		comp.importTypes[astImport.ImportName] = importType
+		defs(comp.scope, sortType).add(newImportDefinition[Type](
+			astImport.ImportName, importType,
+		))
 		return nil
 	default:
 		return fmt.Errorf("unsupported import description type: %T", astImport.Desc)
@@ -379,113 +419,94 @@ func (b *Builder) buildImport(comp *Component, astImport *ast.Import) error {
 
 func (b *Builder) buildExport(comp *Component, astExport *ast.Export) error {
 	// Validate export
-	if err := validateExport(&comp.scope, astExport); err != nil {
+	if err := validateExport(comp.scope, astExport); err != nil {
 		return err
 	}
 
 	switch astExport.SortIdx.Sort {
 	case ast.SortCoreModule:
-		def, err := comp.scope.resolveCoreModuleDefinition(0, astExport.SortIdx.Idx)
-		if err != nil {
-			return err
-		}
-		comp.scope.coreModules = append(comp.scope.coreModules, def)
-		comp.exports[astExport.ExportName] = func(ctx context.Context, scope instanceScope) (any, error) {
-			return def.resolveCoreModule(ctx, scope)
-		}
-		return nil
+		return addExportToComponent(comp, sortCoreModule, astExport.ExportName, astExport.SortIdx.Idx)
 	case ast.SortFunc:
-		def, err := comp.scope.resolveFunctionDefinition(0, astExport.SortIdx.Idx)
-		if err != nil {
-			return err
-		}
-		comp.scope.functions = append(comp.scope.functions, def)
-		comp.exports[astExport.ExportName] = func(ctx context.Context, scope instanceScope) (any, error) {
-			return def.resolveFunction(ctx, scope)
-		}
-		return nil
+		return addExportToComponent(comp, sortFunction, astExport.ExportName, astExport.SortIdx.Idx)
 	case ast.SortType:
-		def := comp.scope.componentModelTypes[astExport.SortIdx.Idx]
-		comp.scope.componentModelTypes = append(comp.scope.componentModelTypes, def)
-		comp.exports[astExport.ExportName] = func(ctx context.Context, scope instanceScope) (any, error) {
-			return scope.resolveType(ctx, def)
-		}
-		return nil
+		return addExportToComponent(comp, sortType, astExport.ExportName, astExport.SortIdx.Idx)
 	case ast.SortComponent:
-		def := comp.scope.components[astExport.SortIdx.Idx]
-		comp.scope.components = append(comp.scope.components, def)
-		comp.exports[astExport.ExportName] = func(ctx context.Context, scope instanceScope) (any, error) {
-			return def.resolveComponent(ctx, scope)
-		}
-		return nil
+		return addExportToComponent(comp, sortComponent, astExport.ExportName, astExport.SortIdx.Idx)
 	case ast.SortInstance:
-		def := comp.scope.instances[astExport.SortIdx.Idx]
-		comp.scope.instances = append(comp.scope.instances, def)
-		instanceIdx := len(comp.scope.instances) - 1
-		comp.exports[astExport.ExportName] = func(ctx context.Context, scope instanceScope) (any, error) {
-			return scope.resolveInstance(ctx, uint32(instanceIdx))
-		}
-		return nil
+		return addExportToComponent(comp, sortInstance, astExport.ExportName, astExport.SortIdx.Idx)
 	}
 	return fmt.Errorf("unsupported export sort: %v", astExport.SortIdx.Sort)
+}
+
+func addExportToComponent[T resolvedInstance[TT], TT Type](comp *Component, sort sort[T, TT], exportName string, idx uint32) error {
+	def, err := defs(comp.scope, sort).get(idx)
+	if err != nil {
+		return err
+	}
+	defs(comp.scope, sort).add(def)
+	if err := validateExportNameStronglyUnique(maps.Keys(comp.exports), exportName); err != nil {
+		return err
+	}
+	comp.exports[exportName] = newDefComponentExport(sort, idx, def.typ())
+	return nil
 }
 
 func (b *Builder) buildCanon(comp *Component, astCanon *ast.Canon) error {
 	switch def := astCanon.Def.(type) {
 	case *ast.CanonLift:
 		// Validate canon lift
-		if err := validateCanonLift(&comp.scope, def); err != nil {
+		if err := validateCanonLift(comp.scope, def); err != nil {
 			return err
 		}
 		fnDef, err := canonLift(comp, def)
 		if err != nil {
 			return err
 		}
-		comp.scope.functions = append(comp.scope.functions, fnDef)
+		defs(comp.scope, sortFunction).add(fnDef)
 		return nil
 	case *ast.CanonLower:
 		// Validate canon lower
-		if err := validateCanonLower(&comp.scope, def); err != nil {
+		if err := validateCanonLower(comp.scope, def); err != nil {
 			return err
 		}
 		fnDef, err := canonLower(comp, def)
 		if err != nil {
 			return err
 		}
-		comp.scope.coreFunctions = append(comp.scope.coreFunctions, fnDef)
+		defs(comp.scope, sortCoreFunction).add(fnDef)
 		return nil
 	case *ast.CanonResourceNew:
 		// Validate canon resource.new
-		if err := validateCanonResourceNew(&comp.scope, def); err != nil {
+		if err := validateCanonResourceNew(comp.scope, def); err != nil {
 			return err
 		}
 		fnDef, err := canonResourceNew(comp, def)
 		if err != nil {
 			return err
 		}
-		comp.scope.coreFunctions = append(comp.scope.coreFunctions, fnDef)
+		defs(comp.scope, sortCoreFunction).add(fnDef)
 		return nil
 	case *ast.CanonResourceDrop:
 		// Validate canon resource.drop
-		if err := validateCanonResourceDrop(&comp.scope, def); err != nil {
+		if err := validateCanonResourceDrop(comp.scope, def); err != nil {
 			return err
 		}
 		fnDef, err := canonResourceDrop(comp, def)
 		if err != nil {
 			return err
 		}
-		comp.scope.coreFunctions = append(comp.scope.coreFunctions, fnDef)
+		defs(comp.scope, sortCoreFunction).add(fnDef)
 		return nil
 	case *ast.CanonResourceRep:
 		// Validate canon resource.rep
-		if err := validateCanonResourceRep(&comp.scope, def); err != nil {
+		if err := validateCanonResourceRep(comp.scope, def); err != nil {
 			return err
 		}
 		fnDef, err := canonResourceRep(comp, def)
 		if err != nil {
 			return err
 		}
-		comp.scope.coreFunctions = append(comp.scope.coreFunctions, fnDef)
+		defs(comp.scope, sortCoreFunction).add(fnDef)
 		return nil
 	default:
 		return fmt.Errorf("unsupported canon def: %T", def)
@@ -495,18 +516,18 @@ func (b *Builder) buildCanon(comp *Component, astCanon *ast.Canon) error {
 func (b *Builder) buildCoreType(comp *Component, core *ast.CoreType) error {
 	switch defType := core.DefType.(type) {
 	case *ast.CoreRecType:
-		recTypeDef, err := astRecTypeToCoreTypeDefinition(&comp.scope, defType)
+		recTypeDef, err := astRecTypeToCoreTypeDefinition(comp.scope, defType)
 		if err != nil {
 			return err
 		}
-		comp.scope.coreTypes = append(comp.scope.coreTypes, recTypeDef)
+		defs(comp.scope, sortCoreType).add(recTypeDef)
 		return nil
 	case *ast.CoreModuleType:
-		modTypeDef, err := astModuleTypeToCoreModuleTypeDefinition(&comp.scope, defType)
+		modTypeDef, err := astModuleTypeToCoreModuleTypeDefinition(comp.scope, defType)
 		if err != nil {
 			return err
 		}
-		comp.scope.coreTypes = append(comp.scope.coreTypes, modTypeDef)
+		defs(comp.scope, sortCoreType).add(modTypeDef)
 		return nil
 	default:
 		return fmt.Errorf("unsupported core type definition: %T", core.DefType)

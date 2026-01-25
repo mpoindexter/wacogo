@@ -17,6 +17,20 @@ var wat2wasmBinary []byte
 
 var compileCache wazero.CompilationCache = wazero.NewCompilationCache()
 
+func init() {
+	// Precompile wat2wasm to speed up tests.
+	ctx := context.Background()
+	runtime := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().WithCompilationCache(compileCache))
+	defer runtime.Close(ctx)
+
+	_, err := runtime.CompileModule(ctx, wat2wasmBinary)
+	if err != nil {
+		panic(fmt.Errorf("precompile wat2wasm: %w", err))
+	}
+
+	// Don't close the module here as we want to keep it in the cache.
+}
+
 // Wat2Wasm converts the given WAT to WASM binary using wazero's wat2wasm module.
 func Wat2Wasm(ctx context.Context, wat string) ([]byte, error) {
 	var stdout bytes.Buffer
@@ -35,7 +49,13 @@ func Wat2Wasm(ctx context.Context, wat string) ([]byte, error) {
 
 	wasi_snapshot_preview1.MustInstantiate(ctx, runtime)
 
-	module, err := runtime.InstantiateWithConfig(ctx, wat2wasmBinary, cnf)
+	cm, err := runtime.CompileModule(ctx, wat2wasmBinary)
+	if err != nil {
+		return nil, fmt.Errorf("compile wat2wasm: %w", err)
+	}
+	defer cm.Close(ctx)
+
+	module, err := runtime.InstantiateModule(ctx, cm, cnf)
 	if err != nil {
 		if exitErr, ok := err.(*sys.ExitError); ok {
 			exitCode := exitErr.ExitCode()

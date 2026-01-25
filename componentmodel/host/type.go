@@ -136,7 +136,7 @@ func resourceTypeFor[T any](inst, owner *Instance) (*componentmodel.ResourceType
 			res.(io.Closer).Close()
 		}
 	}
-	rt = componentmodel.NewResourceType(owner.instance, t, destructor)
+	rt = owner.instanceBuilder.CreateResourceType(t, destructor)
 	inst.resourceTypes[t] = rt
 	return rt, true
 }

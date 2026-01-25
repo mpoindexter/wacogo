@@ -133,7 +133,7 @@ func transformImportSection(sectionData []byte) ([]byte, error) {
 			descData = limitsData
 		case 0x03: // global
 			// Read global type: valtype then mut
-			globalData, err := readGlobalType(reader)
+			globalData, _, err := readGlobalType(reader)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read global type: %w", err)
 			}
@@ -184,6 +184,43 @@ func readTableType(r io.ByteReader) ([]byte, *TableType, error) {
 	}, nil
 }
 
+func readMemoryType(r io.ByteReader) ([]byte, *MemoryType, error) {
+	limitsData, limits, err := readLimits(r)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read memory type: %w", err)
+	}
+	return limitsData, &MemoryType{
+		Min:    limits.Min,
+		Max:    limits.Max,
+		HasMax: limits.HasMax,
+	}, nil
+}
+
+func readGlobalType(r io.ByteReader) ([]byte, *GlobalType, error) {
+	readValtypeData, valtype, err := readType(r)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read global valtype: %w", err)
+	}
+
+	vt, ok := valtype.(ValueType)
+	if !ok {
+		return nil, nil, fmt.Errorf("global valtype is not a value type")
+	}
+
+	mut, err := r.ReadByte()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read global mutability: %w", err)
+	}
+
+	result := make([]byte, 0, len(readValtypeData)+1)
+	result = append(result, readValtypeData...)
+	result = append(result, mut)
+	return result, &GlobalType{
+		ValType: vt,
+		Mutable: mut == 0x01,
+	}, nil
+}
+
 // readLimits reads limits: flag byte, min (u32), optional max (u32)
 func readLimits(r io.ByteReader) ([]byte, *Limits, error) {
 	// Read flag
@@ -222,26 +259,6 @@ func readLimits(r io.ByteReader) ([]byte, *Limits, error) {
 	}
 
 	return result, &limits, nil
-}
-
-// readGlobalType reads a global type: valtype then mut
-func readGlobalType(r io.ByteReader) ([]byte, error) {
-	// Read valtype (can be multi-byte)
-	valtypeData, _, err := readType(r)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read valtype: %w", err)
-	}
-
-	// Read mut
-	mut, err := r.ReadByte()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read mut: %w", err)
-	}
-
-	result := make([]byte, 0, len(valtypeData)+1)
-	result = append(result, valtypeData...)
-	result = append(result, mut)
-	return result, nil
 }
 
 func readType(r io.ByteReader) ([]byte, Type, error) {
@@ -339,6 +356,120 @@ func readLEB128FromReader(r io.ByteReader) (uint32, error) {
 		shift += 7
 		if shift >= 35 {
 			return 0, fmt.Errorf("LEB128 value too large")
+		}
+	}
+}
+
+func copyLEB128FromReader(r io.ByteReader) ([]byte, error) {
+	var result []byte
+
+	for {
+		b, err := r.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, b)
+
+		if b&0x80 == 0 {
+			return result, nil
+		}
+	}
+}
+
+func readConstExpression(r io.ByteReader) ([]byte, error) {
+	var expr bytes.Buffer
+
+	for {
+		opCode, err := r.ReadByte()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read const expression opcode: %w", err)
+		}
+		expr.WriteByte(opCode)
+
+		switch opCode {
+		case 0x41: // i32.const
+			val, err := copyLEB128FromReader(r)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read i32.const value: %w", err)
+			}
+			expr.Write(val)
+		case 0x42: // i64.const
+			val, err := copyLEB128FromReader(r)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read i64.const value: %w", err)
+			}
+			expr.Write(val)
+		case 0x43: // f32.const
+			var buf [4]byte
+			for i := 0; i < 4; i++ {
+				b, err := r.ReadByte()
+				if err != nil {
+					return nil, fmt.Errorf("failed to read f32.const byte: %w", err)
+				}
+				buf[i] = b
+			}
+			expr.Write(buf[:])
+		case 0x44: // f64.const
+			var buf [8]byte
+			for i := 0; i < 8; i++ {
+				b, err := r.ReadByte()
+				if err != nil {
+					return nil, fmt.Errorf("failed to read f64.const byte: %w", err)
+				}
+				buf[i] = b
+			}
+			expr.Write(buf[:])
+		case 0x23: // global.get
+			val, err := copyLEB128FromReader(r)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read global.get index: %w", err)
+			}
+			expr.Write(val)
+		case 0xD0: // ref.null
+			reftype, err := r.ReadByte()
+			if err != nil {
+				return nil, fmt.Errorf("failed to read ref.null type: %w", err)
+			}
+			expr.WriteByte(reftype)
+		case 0xD2: // ref.func
+			val, err := copyLEB128FromReader(r)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read ref.func index: %w", err)
+			}
+			expr.Write(val)
+		case 0xFD: // vector opcode prefix
+			vecOpCode, err := r.ReadByte()
+			if err != nil {
+				return nil, fmt.Errorf("failed to read vector opcode: %w", err)
+			}
+			expr.WriteByte(vecOpCode)
+
+			switch vecOpCode {
+			case 0x0C: // v128.const
+				var buf [16]byte
+				for i := 0; i < 16; i++ {
+					b, err := r.ReadByte()
+					if err != nil {
+						return nil, fmt.Errorf("failed to read v128.const byte: %w", err)
+					}
+					buf[i] = b
+				}
+				expr.Write(buf[:])
+			default:
+				return nil, fmt.Errorf("unexpected vector opcode in const expression: 0x%02x", vecOpCode)
+			}
+		case 0x6A: // i32.add
+		case 0x6B: // i32.sub
+		case 0x6C: // i32.mul
+		case 0x7C: // i64.add
+		case 0x7D: // i64.sub
+		case 0x7E: // i64.mul
+			// No immediates
+		case 0x0B: // end
+			return expr.Bytes(), nil
+
+		default:
+			return nil, fmt.Errorf("unexpected opcode in const expression: 0x%02x", opCode)
 		}
 	}
 }

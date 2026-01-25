@@ -35,7 +35,13 @@ func (t primitiveValueType[T, V]) supportsValue(v Value) bool {
 	_, ok := v.(V)
 	return ok
 }
-func (primitiveValueType[T, V]) equalsType(other Type) bool {
+
+func (primitiveValueType[T, V]) typ() Type {
+	var zero T
+	return zero
+}
+
+func (primitiveValueType[T, V]) assignableFrom(other Type) bool {
 	_, ok := other.(T)
 	return ok
 }
@@ -689,7 +695,11 @@ func (t *RecordType) supportsValue(v Value) bool {
 	return true
 }
 
-func (t *RecordType) equalsType(other Type) bool {
+func (t *RecordType) typ() Type {
+	return t
+}
+
+func (t *RecordType) assignableFrom(other Type) bool {
 	otherRecordType, ok := other.(*RecordType)
 	if !ok {
 		return false
@@ -702,7 +712,7 @@ func (t *RecordType) equalsType(other Type) bool {
 		if f.Name != otherField.Name {
 			return false
 		}
-		if !f.Type.equalsType(otherField.Type) {
+		if !f.Type.assignableFrom(otherField.Type) {
 			return false
 		}
 	}
@@ -827,7 +837,11 @@ func (t *VariantType) supportsValue(v Value) bool {
 	return false
 }
 
-func (t *VariantType) equalsType(other Type) bool {
+func (t *VariantType) typ() Type {
+	return t
+}
+
+func (t *VariantType) assignableFrom(other Type) bool {
 	otherVariantType, ok := other.(*VariantType)
 	if !ok {
 		return false
@@ -843,7 +857,7 @@ func (t *VariantType) equalsType(other Type) bool {
 		if (c.Type == nil) != (otherCase.Type == nil) {
 			return false
 		}
-		if c.Type != nil && !c.Type.equalsType(otherCase.Type) {
+		if c.Type != nil && !c.Type.assignableFrom(otherCase.Type) {
 			return false
 		}
 	}
@@ -1080,12 +1094,19 @@ func (t *ListType) supportsValue(v Value) bool {
 	return true
 }
 
-func (t *ListType) equalsType(other Type) bool {
+func (t *ListType) typ() Type {
+	return t
+}
+
+func (t *ListType) assignableFrom(other Type) bool {
 	otherListType, ok := other.(*ListType)
 	if !ok {
+		if _, ok := other.(ByteArrayType); ok {
+			return t.ElementType.assignableFrom(U8Type{})
+		}
 		return false
 	}
-	return t.ElementType.equalsType(otherListType.ElementType)
+	return t.ElementType.assignableFrom(otherListType.ElementType)
 }
 func (t *ListType) alignment() int   { return 4 }
 func (t *ListType) elementSize() int { return 8 }
@@ -1191,7 +1212,11 @@ func (t *FlagsType) supportsValue(v Value) bool {
 	return true
 }
 
-func (t *FlagsType) equalsType(other Type) bool {
+func (t *FlagsType) typ() Type {
+	return t
+}
+
+func (t *FlagsType) assignableFrom(other Type) bool {
 	otherFlagsType, ok := other.(*FlagsType)
 	if !ok {
 		return false
@@ -1265,7 +1290,7 @@ type ResourceType struct {
 	destructor func(ctx context.Context, res any)
 }
 
-func NewResourceType(instance *Instance, repType reflect.Type, destructor func(ctx context.Context, res any)) *ResourceType {
+func newResourceType(instance *Instance, repType reflect.Type, destructor func(ctx context.Context, res any)) *ResourceType {
 	return &ResourceType{
 		instance:   instance,
 		repType:    repType,
@@ -1273,7 +1298,11 @@ func NewResourceType(instance *Instance, repType reflect.Type, destructor func(c
 	}
 }
 
-func (t *ResourceType) equalsType(other Type) bool {
+func (t *ResourceType) typ() Type {
+	return t
+}
+
+func (t *ResourceType) assignableFrom(other Type) bool {
 	otherRt, ok := other.(*ResourceType)
 	if !ok {
 		return false
@@ -1376,7 +1405,7 @@ func (h *ownHandle) Move(inst *Instance) (ResourceHandle, error) {
 }
 
 type OwnType struct {
-	ResourceType *ResourceType
+	ResourceType Type
 }
 
 func (t OwnType) isValueType() {}
@@ -1388,12 +1417,16 @@ func (t OwnType) supportsValue(v Value) bool {
 	return true
 }
 
-func (t OwnType) equalsType(other Type) bool {
+func (t OwnType) typ() Type {
+	return t
+}
+
+func (t OwnType) assignableFrom(other Type) bool {
 	otherOwnType, ok := other.(OwnType)
 	if !ok {
 		return false
 	}
-	return t.ResourceType.equalsType(otherOwnType.ResourceType)
+	return t.ResourceType.assignableFrom(otherOwnType.ResourceType)
 }
 func (t OwnType) alignment() int   { return 4 }
 func (t OwnType) elementSize() int { return 4 }
@@ -1519,7 +1552,7 @@ func (h *borrowedHandle) Borrow() ResourceHandle {
 }
 
 type BorrowType struct {
-	ResourceType *ResourceType
+	ResourceType Type
 }
 
 func (t BorrowType) isValueType() {}
@@ -1531,12 +1564,16 @@ func (t BorrowType) supportsValue(v Value) bool {
 	return true
 }
 
-func (t BorrowType) equalsType(other Type) bool {
+func (t BorrowType) typ() Type {
+	return t
+}
+
+func (t BorrowType) assignableFrom(other Type) bool {
 	otherBorrowType, ok := other.(BorrowType)
 	if !ok {
 		return false
 	}
-	return t.ResourceType.equalsType(otherBorrowType.ResourceType)
+	return t.ResourceType.assignableFrom(otherBorrowType.ResourceType)
 }
 func (t BorrowType) alignment() int   { return 4 }
 func (t BorrowType) elementSize() int { return 4 }
@@ -1611,7 +1648,11 @@ func (t ByteArrayType) supportsValue(v Value) bool {
 	return true
 }
 
-func (t ByteArrayType) equalsType(other Type) bool {
+func (t ByteArrayType) typ() Type {
+	return t
+}
+
+func (t ByteArrayType) assignableFrom(other Type) bool {
 	_, ok := other.(ByteArrayType)
 	if !ok {
 		return false

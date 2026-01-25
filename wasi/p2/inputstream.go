@@ -101,7 +101,10 @@ func NewReaderInputStream(r io.Reader, maxReadSize, bufferSize, nBuffers int) *R
 			select {
 			case <-stream.done:
 				return
-			case buf := <-pool.free:
+			case buf, ok := <-pool.free:
+				if !ok {
+					return
+				}
 				slcp := buf.getWriteBuffer()
 				if slcp == nil {
 					continue

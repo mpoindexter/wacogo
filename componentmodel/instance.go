@@ -3,12 +3,49 @@ package componentmodel
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	"github.com/partite-ai/wacogo/ast"
 )
 
+type InstanceBuilder struct {
+	exports  map[string]any
+	types    map[string]Type
+	instance *Instance
+}
+
+func NewInstanceBuilder() *InstanceBuilder {
+	instance := newInstance()
+	return &InstanceBuilder{
+		exports:  instance.exports,
+		types:    instance.exportTypes,
+		instance: instance,
+	}
+}
+
+func (b *InstanceBuilder) AddTypeExport(name string, typ Type) {
+	b.exports[name] = typ
+	b.types[name] = typ
+}
+
+func (b *InstanceBuilder) AddFunctionExport(name string, fnFactory func(instance *Instance) *Function) {
+	fn := fnFactory(b.instance)
+	b.exports[name] = fn
+	b.types[name] = fn.typ()
+}
+
+func (b *InstanceBuilder) CreateResourceType(repType reflect.Type, destructor func(ctx context.Context, res any)) *ResourceType {
+	resourceType := newResourceType(b.instance, repType, destructor)
+	return resourceType
+}
+
+func (b *InstanceBuilder) Build() *Instance {
+	return b.instance
+}
+
 type Instance struct {
 	exports        map[string]any
+	exportTypes    map[string]Type
 	active         bool
 	currentContext context.Context
 	loweredHandles *table[ResourceHandle]
@@ -18,6 +55,7 @@ type Instance struct {
 func newInstance() *Instance {
 	return &Instance{
 		exports:        make(map[string]any),
+		exportTypes:    make(map[string]Type),
 		loweredHandles: newTable[ResourceHandle](),
 	}
 }
@@ -48,38 +86,98 @@ func (i *Instance) exit() error {
 	return nil
 }
 
-func NewInstanceOf(exports map[string]any) *Instance {
-	return &Instance{
-		exports:        exports,
-		loweredHandles: newTable[ResourceHandle](),
+func (i *Instance) typ() *instanceType {
+	return &instanceType{
+		exports: i.exportTypes,
 	}
 }
 
-type instanceDefinition interface {
-	resolveInstance(ctx context.Context, scope instanceScope) (*Instance, error)
+func (i *Instance) getExport(name string) (any, Type, error) {
+	val, ok := i.exports[name]
+	if !ok {
+		return nil, nil, fmt.Errorf("export %s not found", name)
+	}
+	typ, ok := i.exportTypes[name]
+	if !ok {
+		return nil, nil, fmt.Errorf("export type for %s not found", name)
+	}
+	return val, typ, nil
+}
+
+type instanceType struct {
+	exports map[string]Type
+}
+
+func newInstanceType(exports map[string]Type) *instanceType {
+	return &instanceType{
+		exports: exports,
+	}
+}
+
+func (it *instanceType) typ() Type {
+	return it
+}
+
+func (it *instanceType) exportType(name string) (Type, error) {
+	et, ok := it.exports[name]
+	if !ok {
+		return nil, fmt.Errorf("export %s not found", name)
+	}
+	return et, nil
+}
+
+func (it *instanceType) assignableFrom(other Type) bool {
+	otherIt, ok := other.(*instanceType)
+	if !ok {
+		return false
+	}
+
+	// all exports in this type are present in the other type
+	for name, exportType := range it.exports {
+		otherExportType, ok := otherIt.exports[name]
+		if !ok || !exportType.assignableFrom(otherExportType) {
+			return false
+		}
+	}
+	return true
 }
 
 type instantiateDefinition struct {
 	componentIdx uint32
-	instanceIdx  uint32
 	args         []ast.InstantiateArg
+	instanceType *instanceType
 }
 
-func (d *instantiateDefinition) resolveInstance(ctx context.Context, scope instanceScope) (*Instance, error) {
-	args := make(map[string]any)
+func newInstantiateDefinition(componentIdx uint32, args []ast.InstantiateArg, instanceType *instanceType) *instantiateDefinition {
+	return &instantiateDefinition{
+		componentIdx: componentIdx,
+		args:         args,
+		instanceType: instanceType,
+	}
+}
+
+func (d *instantiateDefinition) typ() *instanceType {
+	return d.instanceType
+}
+
+func (d *instantiateDefinition) exportType(name string) (Type, error) {
+	et, ok := d.instanceType.exports[name]
+	if !ok {
+		return nil, fmt.Errorf("export %s not found", name)
+	}
+	return et, nil
+}
+
+func (d *instantiateDefinition) resolve(ctx context.Context, scope *instanceScope) (*Instance, error) {
+	args := make(map[string]*instanceArgument)
 	for _, astArg := range d.args {
-		val, err := resolveSortIdx(ctx, scope, astArg.SortIdx)
+		val, typ, err := resolveSortIdx(ctx, scope, astArg.SortIdx)
 		if err != nil {
 			return nil, err
 		}
-		args[astArg.Name] = val
+		args[astArg.Name] = &instanceArgument{val: val, typ: typ}
 	}
-
-	childCompDef, err := scope.resolveComponentDefinition(0, d.componentIdx)
-	if err != nil {
-		return nil, err
-	}
-	childComp, err := childCompDef.resolveComponent(ctx, scope)
+	childComp, err := resolve(ctx, scope, sortComponent, d.componentIdx)
 	if err != nil {
 		return nil, err
 	}
@@ -92,75 +190,39 @@ func (d *instantiateDefinition) resolveInstance(ctx context.Context, scope insta
 
 type inlineExportsDefinition struct {
 	exports     []ast.InlineExport
-	instanceIdx uint32
+	exportTypes map[string]Type
 }
 
-func (d *inlineExportsDefinition) resolveInstance(ctx context.Context, scope instanceScope) (*Instance, error) {
+func newInlineExportsDefinition(exports []ast.InlineExport, exportTypes map[string]Type) *inlineExportsDefinition {
+	return &inlineExportsDefinition{
+		exports:     exports,
+		exportTypes: exportTypes,
+	}
+}
+
+func (d *inlineExportsDefinition) typ() *instanceType {
+	return newInstanceType(d.exportTypes)
+}
+
+func (d *inlineExportsDefinition) exportType(name string) (Type, error) {
+	et, ok := d.exportTypes[name]
+	if !ok {
+		return nil, fmt.Errorf("export %s not found", name)
+	}
+	return et, nil
+}
+
+func (d *inlineExportsDefinition) resolve(ctx context.Context, scope *instanceScope) (*Instance, error) {
 	instance := newInstance()
 
 	for _, export := range d.exports {
-		val, err := resolveSortIdx(ctx, scope, &export.SortIdx)
+		val, typ, err := resolveSortIdx(ctx, scope, &export.SortIdx)
 		if err != nil {
 			return nil, err
 		}
 		instance.exports[export.Name] = val
+		instance.exportTypes[export.Name] = typ
 	}
 
 	return instance, nil
-}
-
-type instanceAliasDefinition struct {
-	instanceIdx uint32
-	exportName  string
-}
-
-func (d *instanceAliasDefinition) resolveInstance(ctx context.Context, scope instanceScope) (*Instance, error) {
-	inst, err := scope.resolveInstance(ctx, d.instanceIdx)
-	if err != nil {
-		return nil, err
-	}
-	aliasInstAny, ok := inst.exports[d.exportName]
-	if !ok {
-		return nil, fmt.Errorf("instance export %s not found in instance %d", d.exportName, d.instanceIdx)
-	}
-	aliasInst, ok := aliasInstAny.(*Instance)
-	if !ok {
-		return nil, fmt.Errorf("export %s in instance %d is not an instance", d.exportName, d.instanceIdx)
-	}
-	return aliasInst, nil
-}
-
-type instanceStaticDefinition struct {
-	instance *Instance
-}
-
-func (d *instanceStaticDefinition) resolveInstance(ctx context.Context, scope instanceScope) (*Instance, error) {
-	return d.instance, nil
-}
-
-type instanceImportDefinition struct {
-	name            string
-	expectedTypeDef componentModelTypeDefinition
-}
-
-func (d *instanceImportDefinition) resolveInstance(ctx context.Context, scope instanceScope) (*Instance, error) {
-	val, err := scope.resolveArgument(d.name)
-	if err != nil {
-		return nil, err
-	}
-	inst, ok := val.(*Instance)
-	if !ok {
-		return nil, fmt.Errorf("import %s is not an instance", d.name)
-	}
-	expectedType, err := scope.resolveType(ctx, d.expectedTypeDef)
-	if err != nil {
-		return nil, err
-	}
-
-	if instType, ok := expectedType.(*instanceType); ok {
-		if err := instType.validateInstance(inst); err != nil {
-			return nil, fmt.Errorf("imported instance %s does not match expected type: %w", d.name, err)
-		}
-	}
-	return inst, nil
 }

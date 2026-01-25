@@ -9,26 +9,24 @@ import (
 )
 
 type Instance struct {
-	exports       map[string]any
-	instance      *componentmodel.Instance
-	resourceTypes map[reflect.Type]*componentmodel.ResourceType
+	instanceBuilder *componentmodel.InstanceBuilder
+	resourceTypes   map[reflect.Type]*componentmodel.ResourceType
 }
 
 func NewInstance() *Instance {
-	exports := make(map[string]any)
+	b := componentmodel.NewInstanceBuilder()
 	return &Instance{
-		exports:       exports,
-		instance:      componentmodel.NewInstanceOf(exports),
-		resourceTypes: make(map[reflect.Type]*componentmodel.ResourceType),
+		instanceBuilder: b,
+		resourceTypes:   make(map[reflect.Type]*componentmodel.ResourceType),
 	}
 }
 
 func (hi *Instance) Instance() *componentmodel.Instance {
-	return hi.instance
+	return hi.instanceBuilder.Build()
 }
 
 func (hi *Instance) AddTypeExport(name string, typ componentmodel.Type) {
-	hi.exports[name] = typ
+	hi.instanceBuilder.AddTypeExport(name, typ)
 }
 
 func (hi *Instance) AddFunction(name string, fn any) error {
@@ -38,7 +36,7 @@ func (hi *Instance) AddFunction(name string, fn any) error {
 	}
 
 	var paramConverters []converter
-	var paramTypes []componentmodel.ValueType
+	var paramTypes []*componentmodel.FunctionParameter
 	var resultConverter converter
 	var resultType componentmodel.ValueType
 
@@ -53,7 +51,10 @@ func (hi *Instance) AddFunction(name string, fn any) error {
 			return fmt.Errorf("cannot convert parameter type %s", paramType.String())
 		}
 		paramConverters = append(paramConverters, converter)
-		paramTypes = append(paramTypes, vt)
+		paramTypes = append(paramTypes, &componentmodel.FunctionParameter{
+			Name: fmt.Sprintf("param%d", i),
+			Type: vt,
+		})
 	}
 
 	switch fnType.NumOut() {
@@ -76,33 +77,35 @@ func (hi *Instance) AddFunction(name string, fn any) error {
 		return fmt.Errorf("functions with more than one return value are not supported")
 	}
 
-	modelFn := componentmodel.NewFunction(
-		&componentmodel.FunctionType{
-			ParamTypes: paramTypes,
-			ResultType: resultType,
-		},
-		func(ctx context.Context, params []componentmodel.Value) (componentmodel.Value, error) {
-			if len(params) != len(paramConverters) {
-				return nil, fmt.Errorf("expected %d parameters, got %d", len(paramConverters), len(params))
-			}
-			cc := &callContext{
-				instance: hi,
-			}
-			var hostParams []reflect.Value
-			for i, param := range params {
-				hostParam := paramConverters[i].toHost(cc, param)
-				hostParams = append(hostParams, reflect.ValueOf(hostParam))
-			}
-			results := reflect.ValueOf(fn).Call(hostParams)
-			if len(results) == 0 {
-				return nil, nil
-			}
-			hostResult := results[0].Interface()
-			componentResult := resultConverter.fromHost(cc, hostResult)
-			return componentResult, nil
-		},
-	)
-	hi.exports[name] = modelFn
+	hi.instanceBuilder.AddFunctionExport(name, func(instance *componentmodel.Instance) *componentmodel.Function {
+		return componentmodel.NewFunction(
+			&componentmodel.FunctionType{
+				Parameters: paramTypes,
+				ResultType: resultType,
+			},
+			func(ctx context.Context, params []componentmodel.Value) (componentmodel.Value, error) {
+				if len(params) != len(paramConverters) {
+					return nil, fmt.Errorf("expected %d parameters, got %d", len(paramConverters), len(params))
+				}
+				cc := &callContext{
+					instance:     instance,
+					hostInstance: hi,
+				}
+				var hostParams []reflect.Value
+				for i, param := range params {
+					hostParam := paramConverters[i].toHost(cc, param)
+					hostParams = append(hostParams, reflect.ValueOf(hostParam))
+				}
+				results := reflect.ValueOf(fn).Call(hostParams)
+				if len(results) == 0 {
+					return nil, nil
+				}
+				hostResult := results[0].Interface()
+				componentResult := resultConverter.fromHost(cc, hostResult)
+				return componentResult, nil
+			},
+		)
+	})
 	return nil
 }
 
