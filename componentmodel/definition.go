@@ -28,7 +28,7 @@ func (s sort[T, TT]) typeName() string {
 	case ast.SortCoreType:
 		return "core type"
 	case ast.SortCoreModule:
-		return "core module"
+		return "module"
 	case ast.SortCoreInstance:
 		return "core instance"
 	case ast.SortFunc:

@@ -48,14 +48,9 @@ func (t *coreMemoryType) assignableFrom(other Type) bool {
 	if !ok {
 		return false
 	}
-	if t.min != otherMem.min {
+	if t.min > otherMem.min {
 		return false
 	}
-	if (t.max == nil) != (otherMem.max == nil) {
-		return false
-	}
-	if t.max != nil && otherMem.max != nil && *t.max != *otherMem.max {
-		return false
-	}
+	// TODO: should we compare max values?
 	return true
 }

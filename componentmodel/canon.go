@@ -3,7 +3,6 @@ package componentmodel
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	"github.com/partite-ai/wacogo/ast"
 	"github.com/tetratelabs/wazero"
@@ -20,7 +19,7 @@ type LiftLoadContext struct {
 	instance       *Instance
 	memory         api.Memory
 	stringEncoding stringEncoding
-	realloc        func(originalPtr, originalSize, alignment, newSize uint32) uint32
+	realloc        func(originalPtr, originalSize, alignment, newSize uint32) (uint32, error)
 	postreturn     api.Function
 }
 
@@ -52,16 +51,8 @@ type coreFunctionLoweredDefinition struct {
 	fnType *FunctionType
 }
 
-func newCoreFunctionLoweredDefinition(id string, astDef *ast.CanonLower, fnType *FunctionType) *coreFunctionLoweredDefinition {
-	return &coreFunctionLoweredDefinition{
-		id:     id,
-		astDef: astDef,
-		fnType: fnType,
-	}
-}
-
 func (d *coreFunctionLoweredDefinition) typ() *coreFunctionType {
-	flatParamTypes, flatResultTypes, _, _ := d.coreFunctionTypes(d.fnType)
+	flatParamTypes, flatResultTypes, _, _ := loweredCoreFunctionTypesFromFunctionType(d.fnType)
 	paramTypes := make([]Type, len(flatParamTypes))
 	for i, vt := range flatParamTypes {
 		paramTypes[i] = coreTypeWasmConstTypeFromWazero(vt)
@@ -81,36 +72,7 @@ func (d *coreFunctionLoweredDefinition) resolve(ctx context.Context, scope *inst
 
 	fnTyp := fn.typ()
 
-	flatParamTypes, flatResultTypes, paramsFlat, returnFlat := d.coreFunctionTypes(fnTyp)
-
-	// Check if memory/realloc are needed and provided
-	needsMemory := !paramsFlat || !returnFlat
-	if slices.ContainsFunc(fnTyp.Parameters, parameterNeedsMemory) {
-		needsMemory = true
-	}
-	if fnTyp.ResultType != nil && typeNeedsMemory(fnTyp.ResultType) {
-		needsMemory = true
-	}
-
-	needsRealloc := false
-	if fnTyp.ResultType != nil && typeNeedsRealloc(fnTyp.ResultType) {
-		needsRealloc = true
-	}
-
-	hasMemory := false
-	hasRealloc := false
-	for _, opt := range d.astDef.Options {
-		switch opt.(type) {
-		case *ast.MemoryOpt:
-			hasMemory = true
-		case *ast.ReallocOpt:
-			hasRealloc = true
-		}
-	}
-
-	if err := validateCanonicalABIOptions(hasMemory, hasRealloc, needsMemory, needsRealloc); err != nil {
-		return nil, fmt.Errorf("canon lower validation failed: %w", err)
-	}
+	flatParamTypes, flatResultTypes, paramsFlat, returnFlat := loweredCoreFunctionTypesFromFunctionType(fnTyp)
 
 	mod, err := scope.runtime.NewHostModuleBuilder(d.id).NewFunctionBuilder().
 		WithGoModuleFunction(
@@ -192,7 +154,7 @@ func (d *coreFunctionLoweredDefinition) resolve(ctx context.Context, scope *inst
 	), nil
 }
 
-func (d *coreFunctionLoweredDefinition) coreFunctionTypes(fnType *FunctionType) ([]api.ValueType, []api.ValueType, bool, bool) {
+func loweredCoreFunctionTypesFromFunctionType(fnType *FunctionType) ([]api.ValueType, []api.ValueType, bool, bool) {
 	var flatParamTypes []api.ValueType
 	var flatResultTypes []api.ValueType
 
@@ -449,54 +411,7 @@ func (d *functionLiftedDefinition) resolve(ctx context.Context, scope *instanceS
 		return nil, fmt.Errorf("failed to resolve core function for canon lift: %w", err)
 	}
 
-	var flatParamTypes []api.ValueType
-	var flatResultTypes []api.ValueType
-
-	for _, p := range fnType.Parameters {
-		flatParamTypes = append(flatParamTypes, p.Type.flatTypes()...)
-	}
-
-	if fnType.ResultType != nil {
-		flatResultTypes = append(flatResultTypes, fnType.ResultType.flatTypes()...)
-	}
-
-	paramsFlat := true
-	if len(flatParamTypes) > maxFlatParams {
-		paramsFlat = false
-		flatParamTypes = []api.ValueType{api.ValueTypeI32}
-	}
-
-	returnFlat := true
-	if len(flatResultTypes) > maxFlatResults {
-		returnFlat = false
-		flatResultTypes = []api.ValueType{api.ValueTypeI32}
-	}
-
-	// Check if memory/realloc are needed and provided
-	needsMemory := !paramsFlat || !returnFlat
-	if slices.ContainsFunc(fnType.Parameters, parameterNeedsMemory) {
-		needsMemory = true
-	}
-	if fnType.ResultType != nil && typeNeedsMemory(fnType.ResultType) {
-		needsMemory = true
-	}
-
-	needsRealloc := slices.ContainsFunc(fnType.Parameters, parameterNeedsRealloc)
-
-	hasMemory := false
-	hasRealloc := false
-	for _, opt := range d.astDef.Options {
-		switch opt.(type) {
-		case *ast.MemoryOpt:
-			hasMemory = true
-		case *ast.ReallocOpt:
-			hasRealloc = true
-		}
-	}
-
-	if err := validateCanonicalABIOptions(hasMemory, hasRealloc, needsMemory, needsRealloc); err != nil {
-		return nil, fmt.Errorf("canon lift validation failed: %w", err)
-	}
+	_, _, paramsFlat, returnFlat := liftedCoreFunctionTypesFromFunctionType(fnType)
 
 	return NewFunction(
 		fnType,
@@ -527,8 +442,11 @@ func (d *functionLiftedDefinition) resolve(ctx context.Context, scope *instanceS
 						paramTypes[i] = p.Type
 					}
 					tt := TupleType(paramTypes...)
-					offset := llc.realloc(0, 0, uint32(tt.alignment()), uint32(tt.elementSize()))
-					err := tt.store(llc, offset, &Record{fields: params})
+					offset, err := llc.realloc(0, 0, uint32(tt.alignment()), uint32(tt.elementSize()))
+					if err != nil {
+						return nil, fmt.Errorf("failed to realloc for canon lower parameters: %w", err)
+					}
+					err = tt.store(llc, offset, &Record{fields: params})
 					if err != nil {
 						return nil, fmt.Errorf("failed to load parameters for canon lower: %w", err)
 					}
@@ -583,6 +501,33 @@ func (d *functionLiftedDefinition) resolve(ctx context.Context, scope *instanceS
 	), nil
 }
 
+func liftedCoreFunctionTypesFromFunctionType(fnType *FunctionType) ([]api.ValueType, []api.ValueType, bool, bool) {
+	var flatParamTypes []api.ValueType
+	var flatResultTypes []api.ValueType
+
+	for _, p := range fnType.Parameters {
+		flatParamTypes = append(flatParamTypes, p.Type.flatTypes()...)
+	}
+
+	if fnType.ResultType != nil {
+		flatResultTypes = append(flatResultTypes, fnType.ResultType.flatTypes()...)
+	}
+
+	paramsFlat := true
+	if len(flatParamTypes) > maxFlatParams {
+		paramsFlat = false
+		flatParamTypes = []api.ValueType{api.ValueTypeI32}
+	}
+
+	returnFlat := true
+	if len(flatResultTypes) > maxFlatResults {
+		returnFlat = false
+		flatResultTypes = []api.ValueType{api.ValueTypeI32}
+	}
+
+	return flatParamTypes, flatResultTypes, paramsFlat, returnFlat
+}
+
 func newLiftLoadContext(ctx context.Context, opts []ast.CanonOpt, scope *instanceScope) (*LiftLoadContext, error) {
 	llc := &LiftLoadContext{
 		instance: scope.currentInstance,
@@ -612,12 +557,16 @@ func newLiftLoadContext(ctx context.Context, opts []ast.CanonOpt, scope *instanc
 				return nil, err
 			}
 			reallocFn := coreFn.module.ExportedFunction(coreFn.name)
-			llc.realloc = func(originalPtr, originalSize, alignment, newSize uint32) uint32 {
+			llc.realloc = func(originalPtr, originalSize, alignment, newSize uint32) (uint32, error) {
 				results, err := reallocFn.Call(ctx, uint64(originalPtr), uint64(originalSize), uint64(alignment), uint64(newSize))
 				if err != nil || len(results) != 1 {
-					return 0
+					return 0, err
 				}
-				return uint32(results[0])
+				ptr := uint32(results[0])
+				if ptr == 0xffffffff {
+					return 0, fmt.Errorf("realloc return: beyond end of memory")
+				}
+				return ptr, nil
 			}
 		case *ast.PostReturnOpt:
 			coreFn, err := resolve(ctx, scope, sortCoreFunction, o.FuncIdx)

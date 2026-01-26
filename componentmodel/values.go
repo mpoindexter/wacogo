@@ -10,6 +10,8 @@ import (
 	"golang.org/x/text/encoding/unicode"
 )
 
+const maxValueTypeDepth = 100
+
 type Value interface {
 	isValue()
 }
@@ -25,6 +27,7 @@ type ValueType interface {
 	load(llc *LiftLoadContext, offset uint32) (Value, error)
 	lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error)
 	store(llc *LiftLoadContext, offset uint32, val Value) error
+	depth() int
 }
 
 type primitiveValueType[T ValueType, V Value] struct{}
@@ -44,6 +47,10 @@ func (primitiveValueType[T, V]) typ() Type {
 func (primitiveValueType[T, V]) assignableFrom(other Type) bool {
 	_, ok := other.(T)
 	return ok
+}
+
+func (primitiveValueType[T, V]) depth() int {
+	return 1
 }
 
 type Bool bool
@@ -629,7 +636,10 @@ func (t StringType) writeString(llc *LiftLoadContext, str String) (uint32, uint3
 	switch llc.stringEncoding {
 	case stringEncodingUTF8:
 		bytes := []byte(str)
-		ptr := llc.realloc(0, 0, 1, uint32(len(bytes)))
+		ptr, err := llc.realloc(0, 0, 1, uint32(len(bytes)))
+		if err != nil {
+			return 0, 0, fmt.Errorf("failed to realloc memory for string: %w", err)
+		}
 		ok := llc.memory.Write(ptr, bytes)
 		if !ok {
 			return 0, 0, fmt.Errorf("failed to write string bytes at ptr %d with length %d", ptr, len(bytes))
@@ -641,7 +651,10 @@ func (t StringType) writeString(llc *LiftLoadContext, str String) (uint32, uint3
 		if err != nil {
 			return 0, 0, fmt.Errorf("failed to encode utf16 string: %w", err)
 		}
-		ptr := llc.realloc(0, 0, 2, uint32(len(encoded)))
+		ptr, err := llc.realloc(0, 0, 2, uint32(len(encoded)))
+		if err != nil {
+			return 0, 0, fmt.Errorf("failed to realloc memory for string: %w", err)
+		}
 		ok := llc.memory.Write(ptr, encoded)
 		if !ok {
 			return 0, 0, fmt.Errorf("failed to write string bytes at ptr %d with length %d", ptr, len(encoded))
@@ -803,6 +816,17 @@ func (t *RecordType) store(llc *LiftLoadContext, offset uint32, val Value) error
 		currentOffset += uint32(f.Type.elementSize())
 	}
 	return nil
+}
+
+func (t *RecordType) depth() int {
+	maxDepth := 0
+	for _, f := range t.Fields {
+		d := f.Type.depth()
+		if d > maxDepth {
+			maxDepth = d
+		}
+	}
+	return maxDepth + 1
 }
 
 type Variant struct {
@@ -1071,6 +1095,20 @@ func (t *VariantType) store(llc *LiftLoadContext, offset uint32, val Value) erro
 	return nil
 }
 
+func (t *VariantType) depth() int {
+	maxDepth := 0
+	for _, c := range t.Cases {
+		if c.Type == nil {
+			continue
+		}
+		d := c.Type.depth()
+		if d > maxDepth {
+			maxDepth = d
+		}
+	}
+	return maxDepth + 1
+}
+
 type List []Value
 
 func (l List) isValue() {}
@@ -1149,7 +1187,10 @@ func (t *ListType) load(llc *LiftLoadContext, offset uint32) (Value, error) {
 
 func (t *ListType) storeListValues(llc *LiftLoadContext, val Value) (uint32, int, error) {
 	listVal := val.(List)
-	ptr := llc.realloc(0, 0, uint32(t.alignment()), uint32(len(listVal))*uint32(t.ElementType.elementSize()))
+	ptr, err := llc.realloc(0, 0, uint32(t.alignment()), uint32(len(listVal))*uint32(t.ElementType.elementSize()))
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to realloc memory for list elements: %w", err)
+	}
 	writeTo := uint32(alignTo(int(ptr), t.ElementType.alignment()))
 	for i := range listVal {
 		err := t.ElementType.store(llc, writeTo, listVal[i])
@@ -1184,6 +1225,10 @@ func (t *ListType) store(llc *LiftLoadContext, offset uint32, val Value) error {
 		return fmt.Errorf("failed to write list length at offset %d", offset+4)
 	}
 	return nil
+}
+
+func (t *ListType) depth() int {
+	return t.ElementType.depth() + 1
 }
 
 type Flags map[string]bool
@@ -1282,6 +1327,10 @@ func (t *FlagsType) store(llc *LiftLoadContext, offset uint32, val Value) error 
 		return fmt.Errorf("failed to write flags bits at offset %d", offset)
 	}
 	return nil
+}
+
+func (t *FlagsType) depth() int {
+	return 1
 }
 
 type ResourceType struct {
@@ -1495,6 +1544,10 @@ func (t OwnType) lower(llc *LiftLoadContext, v Value) (uint32, error) {
 	return idx, nil
 }
 
+func (t OwnType) depth() int {
+	return 1
+}
+
 type borrowedHandle struct {
 	onDrop   func()
 	typ      *ResourceType
@@ -1632,6 +1685,10 @@ func (t BorrowType) lower(llc *LiftLoadContext, v Value) (uint32, error) {
 	return idx, nil
 }
 
+func (t BorrowType) depth() int {
+	return 1
+}
+
 type ByteArray []byte
 
 func (b ByteArray) isValue() {}
@@ -1692,7 +1749,10 @@ func (t ByteArrayType) load(llc *LiftLoadContext, offset uint32) (Value, error) 
 }
 
 func (t ByteArrayType) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, error) {
-	ptr := llc.realloc(0, 0, 1, uint32(len(val.(ByteArray))))
+	ptr, err := llc.realloc(0, 0, 1, uint32(len(val.(ByteArray))))
+	if err != nil {
+		return nil, fmt.Errorf("failed to realloc memory for byte array: %w", err)
+	}
 	ok := llc.memory.Write(ptr, []byte(val.(ByteArray)))
 	if !ok {
 		return nil, fmt.Errorf("failed to write byte array at pointer %d", ptr)
@@ -1702,7 +1762,10 @@ func (t ByteArrayType) lowerFlat(llc *LiftLoadContext, val Value) ([]uint64, err
 
 func (t ByteArrayType) store(llc *LiftLoadContext, offset uint32, val Value) error {
 	aryVal := val.(ByteArray)
-	ptr := llc.realloc(0, 0, 1, uint32(len(aryVal)))
+	ptr, err := llc.realloc(0, 0, 1, uint32(len(aryVal)))
+	if err != nil {
+		return fmt.Errorf("failed to realloc memory for byte array: %w", err)
+	}
 	ok := llc.memory.Write(ptr, []byte(aryVal))
 	if !ok {
 		return fmt.Errorf("failed to write byte array at pointer %d", ptr)
@@ -1716,6 +1779,10 @@ func (t ByteArrayType) store(llc *LiftLoadContext, offset uint32, val Value) err
 		return fmt.Errorf("failed to write byte array length at offset %d", offset+4)
 	}
 	return nil
+}
+
+func (t ByteArrayType) depth() int {
+	return 2
 }
 
 func alignTo(value, alignment int) int {

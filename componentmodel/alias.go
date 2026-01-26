@@ -33,9 +33,9 @@ func (d *coreExportAliasDefinition[T, TT]) resolve(ctx context.Context, scope *i
 	if err != nil {
 		return zero, err
 	}
-	exportVal, typ, err := inst.getExport(d.exportName)
-	if err != nil {
-		return zero, err
+	exportVal, typ, ok := inst.getExport(d.exportName)
+	if !ok {
+		return zero, fmt.Errorf("core instance %d has no export named `%s`", d.instanceIdx, d.exportName)
 	}
 
 	if !d.exportType.assignableFrom(typ) {

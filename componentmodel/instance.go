@@ -67,7 +67,7 @@ func (i *Instance) Export(name string) (any, bool) {
 
 func (i *Instance) enter(ctx context.Context) error {
 	if i.active {
-		return fmt.Errorf("instance is already active")
+		return fmt.Errorf("cannot enter component instance: already active")
 	}
 	i.active = true
 	i.currentContext = ctx
@@ -118,12 +118,12 @@ func (it *instanceType) typ() Type {
 	return it
 }
 
-func (it *instanceType) exportType(name string) (Type, error) {
+func (it *instanceType) exportType(name string) (Type, bool) {
 	et, ok := it.exports[name]
 	if !ok {
-		return nil, fmt.Errorf("export %s not found", name)
+		return nil, false
 	}
-	return et, nil
+	return et, true
 }
 
 func (it *instanceType) assignableFrom(other Type) bool {
@@ -160,12 +160,12 @@ func (d *instantiateDefinition) typ() *instanceType {
 	return d.instanceType
 }
 
-func (d *instantiateDefinition) exportType(name string) (Type, error) {
+func (d *instantiateDefinition) exportType(name string) (Type, bool) {
 	et, ok := d.instanceType.exports[name]
 	if !ok {
-		return nil, fmt.Errorf("export %s not found", name)
+		return nil, false
 	}
-	return et, nil
+	return et, true
 }
 
 func (d *instantiateDefinition) resolve(ctx context.Context, scope *instanceScope) (*Instance, error) {
@@ -204,12 +204,12 @@ func (d *inlineExportsDefinition) typ() *instanceType {
 	return newInstanceType(d.exportTypes)
 }
 
-func (d *inlineExportsDefinition) exportType(name string) (Type, error) {
+func (d *inlineExportsDefinition) exportType(name string) (Type, bool) {
 	et, ok := d.exportTypes[name]
 	if !ok {
-		return nil, fmt.Errorf("export %s not found", name)
+		return nil, false
 	}
-	return et, nil
+	return et, true
 }
 
 func (d *inlineExportsDefinition) resolve(ctx context.Context, scope *instanceScope) (*Instance, error) {

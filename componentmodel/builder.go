@@ -107,15 +107,35 @@ func (b *Builder) buildCoreModule(ctx context.Context, comp *Component, astMod *
 func (b *Builder) buildCoreInstance(ctx context.Context, comp *Component, astInst *ast.CoreInstance) error {
 	switch expr := astInst.Expr.(type) {
 	case *ast.CoreInstantiate:
-		args := make(map[string]uint32)
-		for _, astArg := range expr.Args {
-			args[astArg.Name] = astArg.CoreInstanceIdx
-		}
 		modDef, err := defs(comp.scope, sortCoreModule).get(expr.ModuleIdx)
 		if err != nil {
 			return err
 		}
 		modType := modDef.typ()
+
+		args := make(map[string]uint32)
+		for _, astArg := range expr.Args {
+			args[astArg.Name] = astArg.CoreInstanceIdx
+			instanceDef, err := defs(comp.scope, sortCoreInstance).get(astArg.CoreInstanceIdx)
+			if err != nil {
+				return err
+			}
+
+			instanceType := instanceDef.typ()
+
+			for importName, importType := range modType.imports {
+				if importName.module == astArg.Name {
+					itemType, ok := instanceType.exportType(importName.name)
+					if !ok {
+						return fmt.Errorf("type mismatch: export %s not found in core instance %d", importName.name, astArg.CoreInstanceIdx)
+					}
+
+					if !importType.assignableFrom(itemType) {
+						return fmt.Errorf("type mismatch: import %s in module %d is not assignable from export %s in core instance %d", importName.name, expr.ModuleIdx, importName.name, astArg.CoreInstanceIdx)
+					}
+				}
+			}
+		}
 
 		def := newCoreInstantiateDefinition(expr.ModuleIdx, args, newCoreInstanceType(modType.exports))
 		defs(comp.scope, sortCoreInstance).add(def)
@@ -221,7 +241,7 @@ func addCoreExportAliasDefinitionToScope[T resolvedInstance[TT], TT Type](scope 
 	if err != nil {
 		return err
 	}
-	exportType, err := resolveExportType[TT](instanceDef.typ(), exportName)
+	exportType, err := resolveExportType(instanceDef.typ(), exportName, sort, fmt.Sprintf("core instance %d", instanceIdx))
 	if err != nil {
 		return err
 	}
@@ -259,12 +279,12 @@ func (b *Builder) buildExportAlias(comp *Component, sort ast.Sort, alias *ast.Ex
 	}
 }
 
-func addExportAliasDefinitionToScope[T any, TT Type](scope *definitionScope, sort sort[T, TT], instanceIdx uint32, exportName string) error {
+func addExportAliasDefinitionToScope[T resolvedInstance[TT], TT Type](scope *definitionScope, sort sort[T, TT], instanceIdx uint32, exportName string) error {
 	instanceDef, err := defs(scope, sortInstance).get(instanceIdx)
 	if err != nil {
 		return err
 	}
-	exportType, err := resolveExportType[TT](instanceDef.typ(), exportName)
+	exportType, err := resolveExportType(instanceDef.typ(), exportName, sort, fmt.Sprintf("instance %d", instanceIdx))
 	if err != nil {
 		return err
 	}
@@ -314,7 +334,7 @@ func addOuterAliasDefinitionToScope[T resolvedInstance[TT], TT Type](scope *defi
 		return nil, err
 	}
 
-	defs(scope, sort).add(newOuterAliasDefinition[T, TT](outerIdx, sort, idx, targetDef.typ()))
+	defs(scope, sort).add(newOuterAliasDefinition(outerIdx, sort, idx, targetDef.typ()))
 	return targetDef, nil
 }
 
@@ -323,6 +343,11 @@ func (b *Builder) buildType(comp *Component, astType *ast.Type) error {
 	if err != nil {
 		return err
 	}
+	if vt, ok := def.typ().(ValueType); ok {
+		if vt.depth() > maxValueTypeDepth {
+			return fmt.Errorf("type nesting is too deep")
+		}
+	}
 	defs(comp.scope, sortType).add(newTypeResolverDefinition(def))
 	return nil
 }
@@ -330,6 +355,10 @@ func (b *Builder) buildType(comp *Component, astType *ast.Type) error {
 func (b *Builder) buildImport(comp *Component, astImport *ast.Import) error {
 	// Validate import
 	if err := validateImport(comp.scope, astImport); err != nil {
+		return err
+	}
+
+	if err := validateImportNameStronglyUnique(maps.Keys(comp.importTypes), astImport.ImportName); err != nil {
 		return err
 	}
 
@@ -407,6 +436,9 @@ func (b *Builder) buildImport(comp *Component, astImport *ast.Import) error {
 		default:
 			return fmt.Errorf("unsupported type bound in type import: %T", b)
 		}
+		if err := validateImportNameStronglyUnique(maps.Keys(comp.importTypes), astImport.ImportName); err != nil {
+			return err
+		}
 		comp.importTypes[astImport.ImportName] = importType
 		defs(comp.scope, sortType).add(newImportDefinition[Type](
 			astImport.ImportName, importType,
@@ -423,25 +455,36 @@ func (b *Builder) buildExport(comp *Component, astExport *ast.Export) error {
 		return err
 	}
 
+	var exportType Type
+	if astExport.ExternDesc != nil {
+		var err error
+		exportType, err = astExternDescToType(comp.scope, astExport.ExternDesc, false)
+		if err != nil {
+			return fmt.Errorf("failed to resolve export type: %w", err)
+		}
+	}
 	switch astExport.SortIdx.Sort {
 	case ast.SortCoreModule:
-		return addExportToComponent(comp, sortCoreModule, astExport.ExportName, astExport.SortIdx.Idx)
+		return addExportToComponent(comp, sortCoreModule, astExport.ExportName, astExport.SortIdx.Idx, exportType)
 	case ast.SortFunc:
-		return addExportToComponent(comp, sortFunction, astExport.ExportName, astExport.SortIdx.Idx)
+		return addExportToComponent(comp, sortFunction, astExport.ExportName, astExport.SortIdx.Idx, exportType)
 	case ast.SortType:
-		return addExportToComponent(comp, sortType, astExport.ExportName, astExport.SortIdx.Idx)
+		return addExportToComponent(comp, sortType, astExport.ExportName, astExport.SortIdx.Idx, exportType)
 	case ast.SortComponent:
-		return addExportToComponent(comp, sortComponent, astExport.ExportName, astExport.SortIdx.Idx)
+		return addExportToComponent(comp, sortComponent, astExport.ExportName, astExport.SortIdx.Idx, exportType)
 	case ast.SortInstance:
-		return addExportToComponent(comp, sortInstance, astExport.ExportName, astExport.SortIdx.Idx)
+		return addExportToComponent(comp, sortInstance, astExport.ExportName, astExport.SortIdx.Idx, exportType)
 	}
 	return fmt.Errorf("unsupported export sort: %v", astExport.SortIdx.Sort)
 }
 
-func addExportToComponent[T resolvedInstance[TT], TT Type](comp *Component, sort sort[T, TT], exportName string, idx uint32) error {
+func addExportToComponent[T resolvedInstance[TT], TT Type](comp *Component, sort sort[T, TT], exportName string, idx uint32, expectedType Type) error {
 	def, err := defs(comp.scope, sort).get(idx)
 	if err != nil {
 		return err
+	}
+	if expectedType != nil && !expectedType.assignableFrom(def.typ()) {
+		return fmt.Errorf("type mismatch: export %s ascribed type of export is not compatible", exportName)
 	}
 	defs(comp.scope, sort).add(def)
 	if err := validateExportNameStronglyUnique(maps.Keys(comp.exports), exportName); err != nil {

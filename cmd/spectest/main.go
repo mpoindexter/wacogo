@@ -17,6 +17,30 @@ import (
 	"github.com/tetratelabs/wazero"
 )
 
+var instantiateArgs = map[string]any{
+	"host-echo-u32": componentmodel.NewFunction(
+		&componentmodel.FunctionType{
+			Parameters: []*componentmodel.FunctionParameter{
+				{Name: "value", Type: componentmodel.U32Type{}},
+			},
+			ResultType: componentmodel.U32Type{},
+		},
+		func(ctx context.Context, params []componentmodel.Value) (componentmodel.Value, error) {
+			val := params[0].(componentmodel.U32)
+			return val, nil
+		},
+	),
+	"host-return-two": componentmodel.NewFunction(
+		&componentmodel.FunctionType{
+			Parameters: []*componentmodel.FunctionParameter{},
+			ResultType: componentmodel.U32Type{},
+		},
+		func(ctx context.Context, params []componentmodel.Value) (componentmodel.Value, error) {
+			return componentmodel.U32(2), nil
+		},
+	),
+}
+
 func main() {
 	wastFileName := flag.String("file", "", "the wast file to execute")
 	flag.Parse()
@@ -55,14 +79,23 @@ func main() {
 		}
 		switch expr.Children[0].Value {
 		case "component":
+			instantiate := true
+			if len(expr.Children) > 2 && expr.Children[1].IsAtom() && expr.Children[1].Value == "definition" {
+				instantiate = false
+				copy(expr.Children[1:], expr.Children[2:])
+				expr.Children = expr.Children[:len(expr.Children)-1]
+			}
+
 			fmt.Println("Processing component expression")
 			c, err := buildComponent(ctx, expr)
 			if err != nil {
 				log.Fatalf("Failed to build component %v: %v", expr.Dump(), err)
 			}
-			_, err = c.Instantiate(ctx, nil)
-			if err != nil {
-				log.Fatalf("Failed to instantiate component %v: %v", expr.Dump(), err)
+			if instantiate {
+				_, err = c.Instantiate(ctx, instantiateArgs)
+				if err != nil {
+					log.Fatalf("Failed to instantiate component %v: %v", expr.Dump(), err)
+				}
 			}
 			lastComp = c
 		case "assert_return":
@@ -82,7 +115,7 @@ func main() {
 			}
 			c, err := buildComponent(ctx, expr.Children[1])
 			if err == nil {
-				_, err = c.Instantiate(ctx, nil)
+				_, err = c.Instantiate(ctx, instantiateArgs)
 			}
 			if err == nil {
 				log.Fatalf("Expected assert_invalid to fail, but it succeeded")
@@ -98,12 +131,12 @@ func main() {
 			if len(expr.Children) < 3 {
 				log.Fatalf("assert_trap requires at least 2 arguments")
 			}
-			inst, err := lastComp.Instantiate(ctx, nil)
+			inst, err := lastComp.Instantiate(ctx, instantiateArgs)
 			if err != nil {
 				log.Fatalf("Failed to instantiate component: %v", err)
 			}
 			actionExpr := expr.Children[1]
-			_, err = invokeAction(ctx, inst, actionExpr)
+			_, err = executeAction(ctx, inst, actionExpr)
 			if err == nil {
 				log.Fatalf("Expected assert_trap to fail, but it succeeded")
 			} else {
@@ -145,7 +178,7 @@ func assertReturn(ctx context.Context, inst *componentmodel.Instance, expr *SExp
 
 	// First child is the action
 	actionExpr := expr.Children[1]
-	result, err := invokeAction(ctx, inst, actionExpr)
+	result, err := executeAction(ctx, inst, actionExpr)
 	if err != nil {
 		return fmt.Errorf("action failed: %w", err)
 	}
@@ -171,15 +204,30 @@ func assertReturn(ctx context.Context, inst *componentmodel.Instance, expr *SExp
 	return nil
 }
 
+func executeAction(ctx context.Context, inst *componentmodel.Instance, expr *SExpr) (componentmodel.Value, error) {
+	if len(expr.Children) < 1 {
+		return nil, fmt.Errorf("action requires at least an action name")
+	}
+
+	switch expr.Children[0].Value {
+	case "invoke":
+		return invokeAction(ctx, inst, expr)
+	case "component":
+		fmt.Println("Processing component expression")
+		c, err := buildComponent(ctx, expr)
+		if err != nil {
+			return nil, err
+		}
+		_, err = c.Instantiate(ctx, instantiateArgs)
+		return nil, err
+	}
+	return nil, fmt.Errorf("unsupported action: %s", expr.Children[0].Value)
+}
+
 func invokeAction(ctx context.Context, inst *componentmodel.Instance, expr *SExpr) (componentmodel.Value, error) {
 	if len(expr.Children) < 2 {
-		return nil, fmt.Errorf("action requires at least a function name")
+		return nil, fmt.Errorf("invoke action requires at least a function name")
 	}
-
-	if expr.Children[0].Value != "invoke" {
-		return nil, fmt.Errorf("unsupported action: %v", expr.Value)
-	}
-
 	funcNameExpr := expr.Children[1]
 	funcName := funcNameExpr.Value
 
@@ -209,12 +257,11 @@ func invokeAction(ctx context.Context, inst *componentmodel.Instance, expr *SExp
 }
 
 func parseConst(expr *SExpr) (componentmodel.Value, error) {
-	if len(expr.Children) != 2 {
-		return nil, fmt.Errorf("const expression must have exactly one argument")
-	}
-
 	switch expr.Children[0].Value {
 	case "u8.const":
+		if len(expr.Children) != 2 {
+			return nil, fmt.Errorf("const expression must have exactly one argument")
+		}
 		valExpr := expr.Children[1]
 		val, err := parseUintConst(valExpr.Value, 8)
 		if err != nil {
@@ -222,6 +269,9 @@ func parseConst(expr *SExpr) (componentmodel.Value, error) {
 		}
 		return componentmodel.U8(uint8(val)), nil
 	case "s8.const":
+		if len(expr.Children) != 2 {
+			return nil, fmt.Errorf("const expression must have exactly one argument")
+		}
 		valExpr := expr.Children[1]
 		val, err := parseIntConst(valExpr.Value, 8)
 		if err != nil {
@@ -229,6 +279,9 @@ func parseConst(expr *SExpr) (componentmodel.Value, error) {
 		}
 		return componentmodel.S8(int8(val)), nil
 	case "u16.const":
+		if len(expr.Children) != 2 {
+			return nil, fmt.Errorf("const expression must have exactly one argument")
+		}
 		valExpr := expr.Children[1]
 		val, err := parseUintConst(valExpr.Value, 16)
 		if err != nil {
@@ -236,6 +289,9 @@ func parseConst(expr *SExpr) (componentmodel.Value, error) {
 		}
 		return componentmodel.U16(uint16(val)), nil
 	case "s16.const":
+		if len(expr.Children) != 2 {
+			return nil, fmt.Errorf("const expression must have exactly one argument")
+		}
 		valExpr := expr.Children[1]
 		val, err := parseIntConst(valExpr.Value, 16)
 		if err != nil {
@@ -243,6 +299,9 @@ func parseConst(expr *SExpr) (componentmodel.Value, error) {
 		}
 		return componentmodel.S16(int16(val)), nil
 	case "u32.const":
+		if len(expr.Children) != 2 {
+			return nil, fmt.Errorf("const expression must have exactly one argument")
+		}
 		valExpr := expr.Children[1]
 		val, err := parseUintConst(valExpr.Value, 32)
 		if err != nil {
@@ -250,6 +309,9 @@ func parseConst(expr *SExpr) (componentmodel.Value, error) {
 		}
 		return componentmodel.U32(uint32(val)), nil
 	case "s32.const":
+		if len(expr.Children) != 2 {
+			return nil, fmt.Errorf("const expression must have exactly one argument")
+		}
 		valExpr := expr.Children[1]
 		val, err := parseIntConst(valExpr.Value, 32)
 		if err != nil {
@@ -257,9 +319,15 @@ func parseConst(expr *SExpr) (componentmodel.Value, error) {
 		}
 		return componentmodel.S32(int32(val)), nil
 	case "str.const":
+		if len(expr.Children) != 2 {
+			return nil, fmt.Errorf("const expression must have exactly one argument")
+		}
 		valExpr := expr.Children[1]
 		return componentmodel.String(valExpr.Value), nil
 	case "char.const":
+		if len(expr.Children) != 2 {
+			return nil, fmt.Errorf("const expression must have exactly one argument")
+		}
 		valExpr := expr.Children[1]
 		runes := []rune(valExpr.Value)
 		if len(runes) != 1 {
@@ -267,12 +335,18 @@ func parseConst(expr *SExpr) (componentmodel.Value, error) {
 		}
 		return componentmodel.Char(runes[0]), nil
 	case "bool.const":
+		if len(expr.Children) != 2 {
+			return nil, fmt.Errorf("const expression must have exactly one argument")
+		}
 		valExpr := expr.Children[1]
 		val, err := strconv.ParseBool(valExpr.Value)
 		if err != nil {
 			return nil, fmt.Errorf("invalid bool.const value %v: %w", valExpr.Value, err)
 		}
 		return componentmodel.Bool(val), nil
+	case "list.const":
+		var elements []componentmodel.Value
+		return componentmodel.List(elements), nil
 	default:
 		return nil, fmt.Errorf("unsupported const type: %v", expr.Children[0].Value)
 

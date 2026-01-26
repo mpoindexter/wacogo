@@ -110,7 +110,28 @@ func astRefTypeToCoreTypeDefinition(scope *definitionScope, astType *ast.CoreRef
 			return nil, fmt.Errorf("unsupported abstract heap type: %v", astType)
 		}
 	case *ast.CoreConcreteHeapType:
-		return defs(scope, sortCoreType).get(astType.TypeIdx)
+		def, err := defs(scope, sortCoreType).get(astType.TypeIdx)
+		if err != nil {
+			return nil, err
+		}
+		switch def.typ().(type) {
+		case *coreFunctionType:
+			return def, nil
+		case *coreModuleType:
+			return nil, fmt.Errorf("type index %d is a module type", astType.TypeIdx)
+		case *coreGlobalType:
+			return nil, fmt.Errorf("type index %d is a global type", astType.TypeIdx)
+		case *coreInstanceType:
+			return nil, fmt.Errorf("type index %d is an instance type", astType.TypeIdx)
+		case *coreTableType:
+			return nil, fmt.Errorf("type index %d is a table type", astType.TypeIdx)
+		case *coreMemoryType:
+			return nil, fmt.Errorf("type index %d is a memory type", astType.TypeIdx)
+		case coreTypeWasmConstType:
+			return nil, fmt.Errorf("type index %d is a value type", astType.TypeIdx)
+		default:
+			return nil, fmt.Errorf("type index %d is not a composite type", astType.TypeIdx)
+		}
 	default:
 		return nil, fmt.Errorf("unknown reference type: %T", astType)
 	}
@@ -165,26 +186,28 @@ func astModuleTypeToCoreModuleTypeDefinition(scope *definitionScope, astType *as
 				defs(moduleScope, sortCoreType).add(typDef)
 			case *ast.CoreModuleType:
 				return nil, fmt.Errorf("nested module types are not supported")
+			default:
+				return nil, fmt.Errorf("unsupported core type definition in module type: %T", defType)
 			}
 		case *ast.CoreImportDecl:
-			def, err := astCoreImportDescToCoreTypeDefinition(moduleScope, decl.Desc)
+			typ, err := astCoreImportDescToCoreType(moduleScope, decl.Desc)
 			if err != nil {
 				return nil, fmt.Errorf("failed to convert import %s.%s: %w", decl.Module, decl.Name, err)
 			}
 			importName := moduleName{module: decl.Module, name: decl.Name}
 			if _, exists := imports[importName]; exists {
-				return nil, fmt.Errorf("duplicate import name: %s.%s", decl.Module, decl.Name)
+				return nil, fmt.Errorf("duplicate import name `%s:%s`", decl.Module, decl.Name)
 			}
-			imports[importName] = def
+			imports[importName] = newStaticTypeDefinition(typ)
 		case *ast.CoreExportDecl:
-			def, err := astCoreImportDescToCoreTypeDefinition(moduleScope, decl.Desc)
+			def, err := astCoreImportDescToCoreType(moduleScope, decl.Desc)
 			if err != nil {
 				return nil, fmt.Errorf("failed to convert import %s: %w", decl.Name, err)
 			}
 			if _, exists := exports[decl.Name]; exists {
 				return nil, fmt.Errorf("export name `%s` already defined", decl.Name)
 			}
-			exports[decl.Name] = def
+			exports[decl.Name] = newStaticTypeDefinition(def)
 		case *ast.CoreAliasDecl:
 			alias := decl.Target.(*ast.CoreOuterAlias)
 			switch decl.Sort {
@@ -213,23 +236,32 @@ func astModuleTypeToCoreModuleTypeDefinition(scope *definitionScope, astType *as
 	), nil
 }
 
-func astCoreImportDescToCoreTypeDefinition(moduleScope *definitionScope, desc ast.CoreImportDesc) (definition[Type, Type], error) {
+func astCoreImportDescToCoreType(moduleScope *definitionScope, desc ast.CoreImportDesc) (Type, error) {
 	switch desc := desc.(type) {
 	case *ast.CoreFuncImport:
 		funcTypeDef, err := defs(moduleScope, sortCoreType).get(desc.TypeIdx)
 		if err != nil {
 			return nil, err
 		}
-		defs(moduleScope, sortCoreType).add(funcTypeDef)
-		return funcTypeDef, nil
+		fnType, ok := funcTypeDef.typ().(*coreFunctionType)
+		if !ok {
+			return nil, fmt.Errorf("type index %d is not a function type", desc.TypeIdx)
+		}
+		def := newTypeOnlyDefinition[*coreFunction](fnType)
+		defs(moduleScope, sortCoreFunction).add(def)
+		return fnType, nil
 	case *ast.CoreTableImport:
 		elemType, err := astRefTypeToCoreTypeDefinition(moduleScope, desc.Type.ElemType)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert table element type: %w", err)
 		}
-		tableTypeDef := newCoreTypeTableDefinition(elemType, desc.Type.Limits.Min, desc.Type.Limits.Max)
-		defs(moduleScope, sortCoreType).add(tableTypeDef)
-		return tableTypeDef, nil
+		def := newTypeOnlyDefinition[*coreTable](newCoreTableType(
+			elemType.typ(),
+			desc.Type.Limits.Min,
+			desc.Type.Limits.Max,
+		))
+		defs(moduleScope, sortCoreTable).add(def)
+		return def.typ(), nil
 	case *ast.CoreMemoryImport:
 		if desc.Type.Limits.Max != nil {
 			if *desc.Type.Limits.Max > maxMemoryPages {
@@ -244,19 +276,22 @@ func astCoreImportDescToCoreTypeDefinition(moduleScope *definitionScope, desc as
 		if desc.Type.Limits.Min > maxMemoryPages {
 			return nil, fmt.Errorf("memory size must be at most %d", maxMemoryPages)
 		}
-		memType := newCoreTypeStaticDefinition(newCoreMemoryType(
+		def := newTypeOnlyDefinition[*coreMemory](newCoreMemoryType(
 			desc.Type.Limits.Min,
 			desc.Type.Limits.Max,
 		))
-		defs(moduleScope, sortCoreType).add(memType)
-		return memType, nil
+		defs(moduleScope, sortCoreMemory).add(def)
+		return def.typ(), nil
 	case *ast.CoreGlobalImport:
 		valTypeDef, err := astCoreValTypeToCoreTypeDefinition(moduleScope, desc.Type.Val)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert global value type: %w", err)
 		}
-		defs(moduleScope, sortCoreType).add(valTypeDef)
-		return valTypeDef, nil
+		def := newTypeOnlyDefinition[*coreGlobal](
+			newCoreGlobalType(valTypeDef.typ(), bool(desc.Type.Mut)),
+		)
+		defs(moduleScope, sortCoreGlobal).add(def)
+		return def.typ(), nil
 	case *ast.CoreTagImport:
 		return nil, fmt.Errorf("core tag imports are not supported")
 	default:

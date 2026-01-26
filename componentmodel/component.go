@@ -31,6 +31,8 @@ func (c *Component) Instantiate(ctx context.Context, args map[string]any) (*Inst
 		switch v := val.(type) {
 		case *Instance:
 			instanceArgs[name] = &instanceArgument{val: v, typ: v.typ()}
+		case *Function:
+			instanceArgs[name] = &instanceArgument{val: v, typ: v.typ()}
 		default:
 			return nil, fmt.Errorf("unsupported argument type for %s: %T", name, val)
 		}
@@ -42,28 +44,40 @@ func (c *Component) instantiate(ctx context.Context, args map[string]*instanceAr
 	instance := newInstance()
 	instantiation := newInstanceScope(parentScope, c.scope, instance, c.runtime, args)
 
+	instance.enter(ctx)
+	defer instance.exit()
+
 	coreInstanceDefs := defs(c.scope, sortCoreInstance)
 	for i := range coreInstanceDefs.iterator() {
-		_, err := resolve(ctx, instantiation, sortCoreInstance, uint32(i))
-		if err != nil {
-			return nil, err
+		def, _ := defs(c.scope, sortCoreInstance).get(uint32(i))
+		switch def.(type) {
+		case *coreInstantiateDefinition:
+			_, err := resolve(ctx, instantiation, sortCoreInstance, uint32(i))
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
 	instanceDefs := defs(c.scope, sortInstance)
 	for i := range instanceDefs.iterator() {
-		_, err := resolve(ctx, instantiation, sortInstance, uint32(i))
-		if err != nil {
-			return nil, err
+		def, _ := defs(c.scope, sortInstance).get(uint32(i))
+		switch def.(type) {
+		case *instantiateDefinition:
+			_, err := resolve(ctx, instantiation, sortInstance, uint32(i))
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
 	for exportName, export := range c.exports {
-		val, err := export.resolve(ctx, instantiation)
+		val, typ, err := export.resolve(ctx, instantiation)
 		if err != nil {
 			return nil, fmt.Errorf("failed to instantiate export %s: %v", exportName, err)
 		}
 		instance.exports[exportName] = val
+		instance.exportTypes[exportName] = typ
 	}
 
 	return instance, nil
@@ -79,7 +93,7 @@ func (c *Component) typ() *componentType {
 
 type componentExport interface {
 	typ() Type
-	resolve(ctx context.Context, scope *instanceScope) (any, error)
+	resolve(ctx context.Context, scope *instanceScope) (any, Type, error)
 }
 
 type defComponentExport[T resolvedInstance[TT], TT Type] struct {
@@ -96,8 +110,12 @@ func (e *defComponentExport[T, TT]) typ() Type {
 	return e.exportType
 }
 
-func (e *defComponentExport[T, TT]) resolve(ctx context.Context, scope *instanceScope) (any, error) {
-	return resolve(ctx, scope, e.sort, e.idx)
+func (e *defComponentExport[T, TT]) resolve(ctx context.Context, scope *instanceScope) (any, Type, error) {
+	r, err := resolve(ctx, scope, e.sort, e.idx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return r, r.typ(), nil
 }
 
 type componentStaticDefinition struct {

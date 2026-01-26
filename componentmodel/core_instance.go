@@ -98,12 +98,12 @@ func (ci *coreInstance) typ() *coreInstanceType {
 	return newCoreInstanceType(exportTypes)
 }
 
-func (ci *coreInstance) getExport(name string) (any, Type, error) {
+func (ci *coreInstance) getExport(name string) (any, Type, bool) {
 	export, ok := ci.exports[name]
 	if !ok {
-		return nil, nil, fmt.Errorf("export %s not found", name)
+		return nil, nil, false
 	}
-	return export.val, export.typ, nil
+	return export.val, export.typ, true
 }
 
 type coreInstanceType struct {
@@ -120,12 +120,12 @@ func (t *coreInstanceType) typ() Type {
 	return t
 }
 
-func (t *coreInstanceType) exportType(name string) (Type, error) {
+func (t *coreInstanceType) exportType(name string) (Type, bool) {
 	typ, ok := t.exports[name]
 	if !ok {
-		return nil, fmt.Errorf("export %s not found", name)
+		return nil, false
 	}
-	return typ, nil
+	return typ, true
 }
 
 func (c *coreInstanceType) assignableFrom(other Type) bool {
@@ -167,7 +167,7 @@ func (d *coreInstantiateDefinition) typ() *coreInstanceType {
 func (d *coreInstantiateDefinition) exportType(name string) (Type, error) {
 	et, ok := d.instanceType.exports[name]
 	if !ok {
-		return nil, fmt.Errorf("export %s not found", name)
+		return nil, fmt.Errorf("core instance has no export named `%s`", name)
 	}
 	return et, nil
 }
@@ -231,7 +231,7 @@ func (d *coreInlineExportsDefinition) typ() *coreInstanceType {
 func (d *coreInlineExportsDefinition) exportType(name string) (Type, error) {
 	et, ok := d.instanceType.exports[name]
 	if !ok {
-		return nil, fmt.Errorf("export %s not found", name)
+		return nil, fmt.Errorf("core instance has no export named `%s`", name)
 	}
 	return et, nil
 }

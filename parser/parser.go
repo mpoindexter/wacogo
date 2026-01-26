@@ -690,36 +690,58 @@ func (p *Parser) parseCoreResultType() ([]ast.CoreValType, error) {
 }
 
 func (p *Parser) parseCoreValType() (ast.CoreValType, error) {
-	discriminator, err := p.readByte()
+	discriminator, err := p.peekByte()
 	if err != nil {
 		return nil, err
 	}
 
 	switch discriminator {
 	case 0x7f:
+		if _, err := p.readByte(); err != nil {
+			return nil, err
+		}
 		return ast.CoreNumTypeI32, nil
 	case 0x7e:
+		if _, err := p.readByte(); err != nil {
+			return nil, err
+		}
 		return ast.CoreNumTypeI64, nil
 	case 0x7d:
+		if _, err := p.readByte(); err != nil {
+			return nil, err
+		}
 		return ast.CoreNumTypeF32, nil
 	case 0x7c:
+		if _, err := p.readByte(); err != nil {
+			return nil, err
+		}
 		return ast.CoreNumTypeF64, nil
 	case 0x7b:
+		if _, err := p.readByte(); err != nil {
+			return nil, err
+		}
 		return ast.CoreVecTypeV128, nil
 	case 0x70:
+		if _, err := p.readByte(); err != nil {
+			return nil, err
+		}
 		// funcref
 		return &ast.CoreRefType{
 			Nullable: true,
 			HeapType: ast.CoreAbsHeapTypeFunc,
 		}, nil
 	case 0x6f:
+		if _, err := p.readByte(); err != nil {
+			return nil, err
+		}
 		// externref
 		return &ast.CoreRefType{
 			Nullable: true,
 			HeapType: ast.CoreAbsHeapTypeExtern,
 		}, nil
 	default:
-		return nil, fmt.Errorf("invalid core value type: 0x%02x", discriminator)
+		// reference type
+		return p.parseCoreRefType()
 	}
 }
 
@@ -2092,11 +2114,6 @@ func (p *Parser) parseExport() (*ast.Export, error) {
 		}
 	default:
 		return nil, fmt.Errorf("invalid extern desc presence byte: 0x%02x", hasExternDesc)
-	}
-
-	// Check if exporting a component from root level (not supported)
-	if sortIdx.Sort == ast.SortComponent {
-		return nil, fmt.Errorf("exporting a component from the root component is not supported")
 	}
 
 	return &ast.Export{

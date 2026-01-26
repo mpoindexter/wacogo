@@ -76,7 +76,7 @@ func (s *instanceScope) resolveArgument(name string) (any, Type, error) {
 			}
 		}
 	}
-	return nil, nil, fmt.Errorf("argument %s not found", name)
+	return nil, nil, fmt.Errorf("missing expected export `%s`", name)
 }
 
 type resolvedInstance[TT Type] interface {

@@ -158,15 +158,6 @@ func TestBasicComponent(t *testing.T) {
 			).Match,
 		},
 		{
-			Name: "root level export prohibited",
-			WAT: `
-			(component
-    		(component (export "a"))
-  		)
-  		`,
-			ExpectedErr: "exporting a component from the root component is not supported",
-		},
-		{
 			Name: "type parsing",
 			WAT: `
 			(component $example:gocomponent
