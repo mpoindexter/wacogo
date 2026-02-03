@@ -1,0 +1,25 @@
+{
+  "source_filename": "src/names/kebab.wast",
+  "commands": [
+    {
+      "type": "module",
+      "line": 1,
+      "filename": "kebab.0.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "assert_invalid",
+      "line": 13,
+      "filename": "kebab.1.wasm",
+      "module_type": "binary",
+      "text": "is not in kebab case"
+    },
+    {
+      "type": "assert_invalid",
+      "line": 17,
+      "filename": "kebab.2.wasm",
+      "module_type": "binary",
+      "text": "is not in kebab case"
+    }
+  ]
+}

@@ -141,7 +141,14 @@ func (v NewTimestamp) Timestamp() (DateTime, bool) {
 	return host.VariantCast[DateTime](v, "timestamp")
 }
 
-type DescriptorStat host.Record[DescriptorStat]
+type DescriptorStat host.Record[struct {
+	Type                      host.RecordField[DescriptorStat, DescriptorType]
+	LinkCount                 host.RecordField[DescriptorStat, LinkCount] `cm:"link-count"`
+	Size                      host.RecordField[DescriptorStat, Filesize]
+	DataAccessTimestamp       host.RecordField[DescriptorStat, Option[DateTime]] `cm:"data-access-timestamp"`
+	DataModificationTimestamp host.RecordField[DescriptorStat, Option[DateTime]] `cm:"data-modification-timestamp"`
+	StatusChangeTimestamp     host.RecordField[DescriptorStat, Option[DateTime]] `cm:"status-change-timestamp"`
+}]
 
 func NewDescriptorStat(
 	typ DescriptorType,
@@ -151,45 +158,14 @@ func NewDescriptorStat(
 	dataModificationTimestamp Option[DateTime],
 	statusChangeTimestamp Option[DateTime],
 ) DescriptorStat {
-	return host.RecordConstruct[DescriptorStat](
-		host.RecordField("type", typ),
-		host.RecordField("link-count", linkCount),
-		host.RecordField("size", size),
-		host.RecordField("data-access-timestamp", dataAccessTimestamp),
-		host.RecordField("data-modification-timestamp", dataModificationTimestamp),
-		host.RecordField("status-change-timestamp", statusChangeTimestamp),
-	)
-}
-
-func (ds DescriptorStat) ValueType(inst *host.Instance) componentmodel.ValueType {
-	return host.RecordType[DescriptorStat](
-		inst,
-		NewDescriptorStat,
-	)
-}
-
-func (ds DescriptorStat) Type() DescriptorType {
-	return host.RecordFieldGetIndex[DescriptorType](ds, 0)
-}
-
-func (ds DescriptorStat) LinkCount() LinkCount {
-	return host.RecordFieldGetIndex[LinkCount](ds, 1)
-}
-
-func (ds DescriptorStat) Size() Filesize {
-	return host.RecordFieldGetIndex[Filesize](ds, 2)
-}
-
-func (ds DescriptorStat) DataAccessTimestamp() DateTime {
-	return host.RecordFieldGetIndex[DateTime](ds, 3)
-}
-
-func (ds DescriptorStat) DataModificationTimestamp() DateTime {
-	return host.RecordFieldGetIndex[DateTime](ds, 4)
-}
-
-func (ds DescriptorStat) StatusChangeTimestamp() DateTime {
-	return host.RecordFieldGetIndex[DateTime](ds, 5)
+	rec := host.NewRecord[DescriptorStat]()
+	rec.Fields.Type.Set(rec, typ)
+	rec.Fields.LinkCount.Set(rec, linkCount)
+	rec.Fields.Size.Set(rec, size)
+	rec.Fields.DataAccessTimestamp.Set(rec, dataAccessTimestamp)
+	rec.Fields.DataModificationTimestamp.Set(rec, dataModificationTimestamp)
+	rec.Fields.StatusChangeTimestamp.Set(rec, statusChangeTimestamp)
+	return rec.Record()
 }
 
 type PathFlags host.Flags[PathFlags]
@@ -211,35 +187,28 @@ func (OpenFlags) FlagsValues() []string {
 	}
 }
 
-type DirectoryEntry host.Record[DirectoryEntry]
+type DirectoryEntry host.Record[struct {
+	Type host.RecordField[DirectoryEntry, DescriptorType]
+	Name host.RecordField[DirectoryEntry, string]
+}]
 
 func NewDirectoryEntry(entryType DescriptorType, name string) DirectoryEntry {
-	return host.RecordConstruct[DirectoryEntry](
-		host.RecordField("type", entryType),
-		host.RecordField("name", name),
-	)
-}
-func (de DirectoryEntry) ValueType(inst *host.Instance) componentmodel.ValueType {
-	return host.RecordType[DirectoryEntry](
-		inst,
-		NewDirectoryEntry,
-	)
+	rec := host.NewRecord[DirectoryEntry]()
+	rec.Fields.Type.Set(rec, entryType)
+	rec.Fields.Name.Set(rec, name)
+	return rec.Record()
 }
 
-type MetadataHashValue host.Record[MetadataHashValue]
+type MetadataHashValue host.Record[struct {
+	Lower host.RecordField[MetadataHashValue, componentmodel.U64]
+	Upper host.RecordField[MetadataHashValue, componentmodel.U64]
+}]
 
 func NewMetadataHashValue(lower componentmodel.U64, upper componentmodel.U64) MetadataHashValue {
-	return host.RecordConstruct[MetadataHashValue](
-		host.RecordField("lower", lower),
-		host.RecordField("upper", upper),
-	)
-}
-
-func (mhv MetadataHashValue) ValueType(inst *host.Instance) componentmodel.ValueType {
-	return host.RecordType[MetadataHashValue](
-		inst,
-		NewMetadataHashValue,
-	)
+	rec := host.NewRecord[MetadataHashValue]()
+	rec.Fields.Lower.Set(rec, lower)
+	rec.Fields.Upper.Set(rec, upper)
+	return rec.Record()
 }
 
 func CreateFilesystemTypesInstance(

@@ -5,124 +5,130 @@ import (
 	"fmt"
 )
 
-type coreExportAliasDefinition[T resolvedInstance[TT], TT Type] struct {
-	instanceIdx uint32
-	exportName  string
-	exportType  TT
+type exportAliasDefinition[V any, T Type, I exporter, IT exportType] struct {
+	instanceIdx  uint32
+	exportName   string
+	sort         sort[V, T]
+	instanceSort sort[I, IT]
 }
 
-func newCoreExportAliasDefinition[T resolvedInstance[TT], TT Type](
-	instanceIdx uint32,
-	exportName string,
-	exportType TT,
-) *coreExportAliasDefinition[T, TT] {
-	return &coreExportAliasDefinition[T, TT]{
-		instanceIdx: instanceIdx,
-		exportName:  exportName,
-		exportType:  exportType,
-	}
-}
-
-func (d *coreExportAliasDefinition[T, TT]) typ() TT {
-	return d.exportType
-}
-
-func (d *coreExportAliasDefinition[T, TT]) resolve(ctx context.Context, scope *instanceScope) (T, error) {
-	var zero T
-	inst, err := resolve(ctx, scope, sortCoreInstance, d.instanceIdx)
-	if err != nil {
-		return zero, err
-	}
-	exportVal, typ, ok := inst.getExport(d.exportName)
-	if !ok {
-		return zero, fmt.Errorf("core instance %d has no export named `%s`", d.instanceIdx, d.exportName)
-	}
-
-	if !d.exportType.assignableFrom(typ) {
-		return zero, fmt.Errorf("export %s in instance %d is not of expected type", d.exportName, d.instanceIdx)
-	}
-
-	typedVal, ok := exportVal.(T)
-	if !ok {
-		return zero, fmt.Errorf("export %s in instance %d is not of expected type", d.exportName, d.instanceIdx)
-	}
-	return typedVal, nil
-}
-
-type exportAliasDefinition[T any, TT Type] struct {
-	instanceIdx uint32
-	exportName  string
-	sort        sort[T, TT]
-	exportType  TT
-}
-
-func newExportAliasDefinition[T any, TT Type](
+func newInstanceExportAliasDefinition[T comparable, TT Type](
 	instanceIdx uint32,
 	exportName string,
 	sort sort[T, TT],
-	exportType TT,
-) *exportAliasDefinition[T, TT] {
-	return &exportAliasDefinition[T, TT]{
-		instanceIdx: instanceIdx,
-		exportName:  exportName,
-		sort:        sort,
-		exportType:  exportType,
+) *exportAliasDefinition[T, TT, *Instance, *instanceType] {
+	return &exportAliasDefinition[T, TT, *Instance, *instanceType]{
+		instanceIdx:  instanceIdx,
+		exportName:   exportName,
+		sort:         sort,
+		instanceSort: sortInstance,
 	}
 }
 
-func (d *exportAliasDefinition[T, TT]) typ() TT {
-	return d.exportType
+func newCoreExportAliasDefinition[T comparable, TT Type](
+	instanceIdx uint32,
+	exportName string,
+	sort sort[T, TT],
+) *exportAliasDefinition[T, TT, *coreInstance, *coreInstanceType] {
+	return &exportAliasDefinition[T, TT, *coreInstance, *coreInstanceType]{
+		instanceIdx:  instanceIdx,
+		exportName:   exportName,
+		sort:         sort,
+		instanceSort: sortCoreInstance,
+	}
 }
 
-func (d *exportAliasDefinition[T, TT]) resolve(ctx context.Context, scope *instanceScope) (T, error) {
-	var zero T
-	inst, err := resolve(ctx, scope, sortInstance, d.instanceIdx)
+func (d *exportAliasDefinition[V, T, I, IT]) isDefinition() {}
+
+func (d *exportAliasDefinition[V, T, I, IT]) createType(scope *scope) (T, error) {
+	instanceType, err := sortScopeFor(scope, d.instanceSort).getType(d.instanceIdx)
 	if err != nil {
-		return zero, err
+		return zero[T](), err
 	}
-	exportVal, _, err := inst.getExport(d.exportName)
-	if err != nil {
-		return zero, err
-	}
-	typedVal, ok := exportVal.(T)
+	exportType, ok := instanceType.exportType(d.exportName)
 	if !ok {
-		return zero, fmt.Errorf("export %s in instance %d is not a %s", d.exportName, d.instanceIdx, d.sort.typeName())
+		return zero[T](), fmt.Errorf("%s %d has no export named `%s`", d.instanceSort.typeName(), d.instanceIdx, d.exportName)
+	}
+
+	exportTypeCast, ok := exportType.(T)
+	if !ok {
+		return zero[T](), fmt.Errorf("export `%s` for %s %d is not a %s", d.exportName, d.instanceSort.typeName(), d.instanceIdx, d.sort.typeName())
+	}
+
+	return exportTypeCast, nil
+}
+
+func (d *exportAliasDefinition[V, T, I, IT]) createInstance(ctx context.Context, scope *scope) (V, error) {
+	inst, err := sortScopeFor(scope, d.instanceSort).getInstance(d.instanceIdx)
+	if err != nil {
+		return zero[V](), err
+	}
+	exportVal, err := inst.getExport(d.exportName)
+	if err != nil {
+		return zero[V](), err
+	}
+	typedVal, ok := exportVal.(V)
+	if !ok {
+		return zero[V](), fmt.Errorf("export %s in %s %d is not a %s", d.exportName, d.instanceSort.typeName(), d.instanceIdx, d.sort.typeName())
 	}
 	return typedVal, nil
 }
 
-type outerAliasDefinition[T resolvedInstance[TT], TT Type] struct {
-	outerIdx   uint32
-	sort       sort[T, TT]
-	idx        uint32
-	exportType TT
+type outerAliasDefinition[V any, T Type] struct {
+	outerIdx      uint32
+	sort          sort[V, T]
+	idx           uint32
+	allowResource bool
 }
 
-func newOuterAliasDefinition[T resolvedInstance[TT], TT Type](
+func newOuterAliasDefinition[V any, T Type](
 	outerIdx uint32,
-	sort sort[T, TT],
+	sort sort[V, T],
 	idx uint32,
-	exportType TT,
-) *outerAliasDefinition[T, TT] {
-	return &outerAliasDefinition[T, TT]{
-		outerIdx:   outerIdx,
-		sort:       sort,
-		idx:        idx,
-		exportType: exportType,
+	allowResource bool,
+) *outerAliasDefinition[V, T] {
+	return &outerAliasDefinition[V, T]{
+		outerIdx:      outerIdx,
+		sort:          sort,
+		idx:           idx,
+		allowResource: allowResource,
 	}
 }
 
-func (d *outerAliasDefinition[T, TT]) typ() TT {
-	return d.exportType
-}
+func (d *outerAliasDefinition[V, T]) isDefinition() {}
 
-func (d *outerAliasDefinition[T, TT]) resolve(ctx context.Context, scope *instanceScope) (T, error) {
-	targetScope := scope
-	for i := uint32(0); i < d.outerIdx; i++ {
-		if targetScope.parent == nil {
-			return *new(T), fmt.Errorf("no outer instance scope at index %d", d.outerIdx)
+func (d *outerAliasDefinition[V, T]) createType(scope *scope) (T, error) {
+	targetScope, err := scope.closure(d.outerIdx)
+	if err != nil {
+		return zero[T](), err
+	}
+
+	t, err := sortScopeFor(targetScope, d.sort).getType(d.idx)
+	if err != nil {
+		return zero[T](), err
+	}
+
+	if !d.allowResource && int(d.outerIdx) > 0 && int(d.sort) == int(sortType) {
+		err := walkTypes(any(t).(Type), func(t Type) error {
+			switch t.(type) {
+			case *ResourceType:
+				return fmt.Errorf("alias refers to resources not defined in the current component")
+			default:
+				return nil
+			}
+		})
+		if err != nil {
+			return zero[T](), err
 		}
-		targetScope = targetScope.parent
 	}
-	return resolve(ctx, targetScope, d.sort, d.idx)
+
+	return t, nil
+}
+
+func (d *outerAliasDefinition[V, T]) createInstance(ctx context.Context, scope *scope) (V, error) {
+	targetScope, err := scope.closure(d.outerIdx)
+	if err != nil {
+		return zero[V](), err
+	}
+	return sortScopeFor(targetScope, d.sort).getInstance(d.idx)
 }

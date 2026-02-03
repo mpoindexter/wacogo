@@ -1,0 +1,1 @@
+(component(export "" (func $foo)) )

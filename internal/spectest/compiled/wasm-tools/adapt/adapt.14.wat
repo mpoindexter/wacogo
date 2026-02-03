@@ -1,0 +1,1 @@
+(component(core module $m (func (export ""))) (core instance $i (instantiate $m)) (core func (canon lower (func $i ""))) )

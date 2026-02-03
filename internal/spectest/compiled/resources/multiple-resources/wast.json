@@ -1,0 +1,26 @@
+{
+  "source_filename": "src/resources/multiple-resources.wast",
+  "commands": [
+    {
+      "type": "module",
+      "line": 5,
+      "filename": "multiple-resources.0.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "assert_return",
+      "line": 171,
+      "action": {
+        "type": "invoke",
+        "field": "run",
+        "args": []
+      },
+      "expected": [
+        {
+          "type": "u32",
+          "value": "42"
+        }
+      ]
+    }
+  ]
+}

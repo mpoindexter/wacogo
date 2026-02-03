@@ -1,7 +1,6 @@
 package componentmodel
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/partite-ai/wacogo/ast"
@@ -9,39 +8,43 @@ import (
 	"github.com/tetratelabs/wazero/api"
 )
 
-const memoryPageSize = 65536
 const maxMemoryPages = 65536 // 4 GiB
-
-type coreTypeStaticDefinition struct {
-	staticType Type
-}
-
-func newCoreTypeStaticDefinition(staticType Type) *coreTypeStaticDefinition {
-	return &coreTypeStaticDefinition{
-		staticType: staticType,
-	}
-}
-
-func (d *coreTypeStaticDefinition) typ() Type {
-	return d.staticType
-}
-
-func (d *coreTypeStaticDefinition) resolve(ctx context.Context, scope *instanceScope) (Type, error) {
-	return d.staticType, nil
-}
 
 type coreTypeWasmConstType byte
 
-func (t coreTypeWasmConstType) typ() Type {
-	return t
+func (c coreTypeWasmConstType) isType() {}
+
+func (t coreTypeWasmConstType) typeName() string {
+	switch t {
+	case coreTypeWasmConstTypeFromWazero(api.ValueTypeI32):
+		return "i32"
+	case coreTypeWasmConstTypeFromWazero(api.ValueTypeI64):
+		return "i64"
+	case coreTypeWasmConstTypeFromWazero(api.ValueTypeF32):
+		return "f32"
+	case coreTypeWasmConstTypeFromWazero(api.ValueTypeF64):
+		return "f64"
+	case coreTypeWasmConstTypeV128:
+		return "v128"
+	case coreTypeWasmConstTypeFuncref:
+		return "funcref"
+	case coreTypeWasmConstTypeFromWazero(api.ValueTypeExternref):
+		return "externref"
+	default:
+		return fmt.Sprintf("unknown value type: %d", byte(t))
+	}
 }
 
-func (t coreTypeWasmConstType) assignableFrom(other Type) bool {
-	otherWazeroType, ok := other.(coreTypeWasmConstType)
-	if !ok {
-		return false
-	}
-	return t == otherWazeroType
+func (t coreTypeWasmConstType) checkType(other Type, checker typeChecker) error {
+	return assertTypeIdentityEqual(t, other)
+}
+
+func (t coreTypeWasmConstType) typeSize() int {
+	return 1
+}
+
+func (t coreTypeWasmConstType) typeDepth() int {
+	return 1
 }
 
 var coreTypeWasmConstTypeV128 = coreTypeWasmConstType(0x7B)
@@ -72,72 +75,58 @@ func coreTypeWasmConstTypeFromWasmParser(vt wasm.Type) (coreTypeWasmConstType, e
 	}
 }
 
-func astCoreValTypeToCoreTypeDefinition(scope *definitionScope, astType ast.CoreValType) (definition[Type, Type], error) {
+func astCoreValTypeToTypeResolver(defs *definitions, astType ast.CoreValType) (typeResolver, error) {
 	switch astType := astType.(type) {
 	case ast.CoreNumType:
 		switch astType {
 		case ast.CoreNumTypeI32:
-			return newCoreTypeStaticDefinition(coreTypeWasmConstTypeFromWazero(api.ValueTypeI32)), nil
+			return newStaticTypeResolver(coreTypeWasmConstTypeFromWazero(api.ValueTypeI32)), nil
 		case ast.CoreNumTypeI64:
-			return newCoreTypeStaticDefinition(coreTypeWasmConstTypeFromWazero(api.ValueTypeI64)), nil
+			return newStaticTypeResolver(coreTypeWasmConstTypeFromWazero(api.ValueTypeI64)), nil
 		case ast.CoreNumTypeF32:
-			return newCoreTypeStaticDefinition(coreTypeWasmConstTypeFromWazero(api.ValueTypeF32)), nil
+			return newStaticTypeResolver(coreTypeWasmConstTypeFromWazero(api.ValueTypeF32)), nil
 		case ast.CoreNumTypeF64:
-			return newCoreTypeStaticDefinition(coreTypeWasmConstTypeFromWazero(api.ValueTypeF64)), nil
+			return newStaticTypeResolver(coreTypeWasmConstTypeFromWazero(api.ValueTypeF64)), nil
 		}
 	case ast.CoreVecType:
 		switch astType {
 		case ast.CoreVecTypeV128:
-			return newCoreTypeStaticDefinition(coreTypeWasmConstTypeV128), nil
+			return newStaticTypeResolver(coreTypeWasmConstTypeV128), nil
 		default:
 			return nil, fmt.Errorf("unknown core vector type: %v", astType)
 		}
 	case *ast.CoreRefType:
-		return astRefTypeToCoreTypeDefinition(scope, astType)
+		return astRefTypeToTypeResolver(defs, astType)
 	}
 	return nil, fmt.Errorf("unknown core value type: %T", astType)
 }
 
-func astRefTypeToCoreTypeDefinition(scope *definitionScope, astType *ast.CoreRefType) (definition[Type, Type], error) {
+func astRefTypeToTypeResolver(defs *definitions, astType *ast.CoreRefType) (typeResolver, error) {
 	switch astType := astType.HeapType.(type) {
 	case ast.CoreAbsHeapType:
 		switch astType {
 		case ast.CoreAbsHeapTypeExtern:
-			return newCoreTypeStaticDefinition(coreTypeWasmConstTypeFromWazero(api.ValueTypeExternref)), nil
+			return newStaticTypeResolver(coreTypeWasmConstTypeFromWazero(api.ValueTypeExternref)), nil
 		case ast.CoreAbsHeapTypeFunc:
-			return newCoreTypeStaticDefinition(coreTypeWasmConstTypeFuncref), nil
+			return newStaticTypeResolver(coreTypeWasmConstTypeFuncref), nil
 		default:
 			return nil, fmt.Errorf("unsupported abstract heap type: %v", astType)
 		}
 	case *ast.CoreConcreteHeapType:
-		def, err := defs(scope, sortCoreType).get(astType.TypeIdx)
-		if err != nil {
-			return nil, err
-		}
-		switch def.typ().(type) {
-		case *coreFunctionType:
-			return def, nil
-		case *coreModuleType:
-			return nil, fmt.Errorf("type index %d is a module type", astType.TypeIdx)
-		case *coreGlobalType:
-			return nil, fmt.Errorf("type index %d is a global type", astType.TypeIdx)
-		case *coreInstanceType:
-			return nil, fmt.Errorf("type index %d is an instance type", astType.TypeIdx)
-		case *coreTableType:
-			return nil, fmt.Errorf("type index %d is a table type", astType.TypeIdx)
-		case *coreMemoryType:
-			return nil, fmt.Errorf("type index %d is a memory type", astType.TypeIdx)
-		case coreTypeWasmConstType:
-			return nil, fmt.Errorf("type index %d is a value type", astType.TypeIdx)
-		default:
-			return nil, fmt.Errorf("type index %d is not a composite type", astType.TypeIdx)
-		}
+		return newIndexTypeResolver(sortCoreType, astType.TypeIdx, func(t Type) error {
+			switch t.(type) {
+			case *coreFunctionType:
+				return nil
+			default:
+				return fmt.Errorf("unexpected core ref type: type index %d is a %s type", astType.TypeIdx, t.typeName())
+			}
+		}), nil
 	default:
 		return nil, fmt.Errorf("unknown reference type: %T", astType)
 	}
 }
 
-func astRecTypeToCoreTypeDefinition(scope *definitionScope, astType *ast.CoreRecType) (definition[Type, Type], error) {
+func astRecTypeToTypeResolver(defs *definitions, astType *ast.CoreRecType) (typeResolver, error) {
 	// Currently, only function types are supported
 	if len(astType.SubTypes) != 1 {
 		return nil, fmt.Errorf("core recursive type with multiple types not supported")
@@ -148,49 +137,50 @@ func astRecTypeToCoreTypeDefinition(scope *definitionScope, astType *ast.CoreRec
 	}
 	fnType, ok := st.Type.(*ast.CoreFuncType)
 	if !ok {
-		return nil, fmt.Errorf("only core function types are supported in recursive types, got %T", st.Type)
+		return nil, fmt.Errorf("only core function types are supported in recursive types, found %T", st.Type)
 	}
 
-	paramTypes := make([]definition[Type, Type], len(fnType.Params.Types))
+	paramTypes := make([]typeResolver, len(fnType.Params.Types))
 	for i, astParamType := range fnType.Params.Types {
-		ct, err := astCoreValTypeToCoreTypeDefinition(scope, astParamType)
+		tr, err := astCoreValTypeToTypeResolver(defs, astParamType)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert parameter type %d: %w", i, err)
 		}
-		paramTypes[i] = ct
+		paramTypes[i] = tr
 	}
-	resultTypes := make([]definition[Type, Type], len(fnType.Results.Types))
+	resultTypes := make([]typeResolver, len(fnType.Results.Types))
 	for i, astResultType := range fnType.Results.Types {
-		ct, err := astCoreValTypeToCoreTypeDefinition(scope, astResultType)
+		tr, err := astCoreValTypeToTypeResolver(defs, astResultType)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert result type %d: %w", i, err)
 		}
-		resultTypes[i] = ct
+		resultTypes[i] = tr
 	}
-	return newCoreTypeFunctionDefinition(paramTypes, resultTypes), nil
+	return newCoreTypeFunctionTypeResolver(paramTypes, resultTypes), nil
 }
 
-func astModuleTypeToCoreModuleTypeDefinition(scope *definitionScope, astType *ast.CoreModuleType) (*coreModuleTypeDefinition, error) {
-	imports := make(map[moduleName]definition[Type, Type])
-	exports := make(map[string]definition[Type, Type])
-	moduleScope := newDefinitionScope(scope)
+func astModuleTypeToCoreModuleTypeResolver(defs *definitions, astType *ast.CoreModuleType) (*coreModuleTypeDefinition, error) {
+	imports := make(map[moduleName]typeResolver)
+	exports := make(map[string]typeResolver)
+	moduleDefs := newDefinitions()
+
 	for _, decl := range astType.Declarations {
 		switch decl := decl.(type) {
 		case *ast.CoreTypeDecl:
 			switch defType := decl.Type.DefType.(type) {
 			case *ast.CoreRecType:
-				typDef, err := astRecTypeToCoreTypeDefinition(moduleScope, defType)
+				tr, err := astRecTypeToTypeResolver(moduleDefs, defType)
 				if err != nil {
 					return nil, fmt.Errorf("failed to convert recursive type: %w", err)
 				}
-				defs(moduleScope, sortCoreType).add(typDef)
+				sortDefsFor(moduleDefs, sortCoreType).add(newTypeResolverDefinition(tr))
 			case *ast.CoreModuleType:
 				return nil, fmt.Errorf("nested module types are not supported")
 			default:
 				return nil, fmt.Errorf("unsupported core type definition in module type: %T", defType)
 			}
 		case *ast.CoreImportDecl:
-			typ, err := astCoreImportDescToCoreType(moduleScope, decl.Desc)
+			tr, err := astCoreImportDescToTypeResolver(moduleDefs, decl.Desc)
 			if err != nil {
 				return nil, fmt.Errorf("failed to convert import %s.%s: %w", decl.Module, decl.Name, err)
 			}
@@ -198,30 +188,21 @@ func astModuleTypeToCoreModuleTypeDefinition(scope *definitionScope, astType *as
 			if _, exists := imports[importName]; exists {
 				return nil, fmt.Errorf("duplicate import name `%s:%s`", decl.Module, decl.Name)
 			}
-			imports[importName] = newStaticTypeDefinition(typ)
+			imports[importName] = tr
 		case *ast.CoreExportDecl:
-			def, err := astCoreImportDescToCoreType(moduleScope, decl.Desc)
+			tr, err := astCoreImportDescToTypeResolver(moduleDefs, decl.Desc)
 			if err != nil {
 				return nil, fmt.Errorf("failed to convert import %s: %w", decl.Name, err)
 			}
 			if _, exists := exports[decl.Name]; exists {
 				return nil, fmt.Errorf("export name `%s` already defined", decl.Name)
 			}
-			exports[decl.Name] = newStaticTypeDefinition(def)
+			exports[decl.Name] = tr
 		case *ast.CoreAliasDecl:
 			alias := decl.Target.(*ast.CoreOuterAlias)
 			switch decl.Sort {
 			case ast.CoreSortType:
-				coreTypeDefs, err := nestedDefs(moduleScope, sortCoreType, alias.Count)
-				if err != nil {
-					return nil, fmt.Errorf("failed to get nested core type definitions for alias: %w", err)
-				}
-				def, err := coreTypeDefs.get(alias.Idx)
-				if err != nil {
-					return nil, fmt.Errorf("failed to resolve core type definition for alias: %w", err)
-				}
-				defs(moduleScope, sortCoreType).add(def)
-				continue
+				sortDefsFor(moduleDefs, sortCoreType).add(newOuterAliasDefinition(alias.Count, sortCoreType, alias.Idx, false))
 			default:
 				return nil, fmt.Errorf("unsupported core alias sort: %v", decl.Sort)
 			}
@@ -231,37 +212,33 @@ func astModuleTypeToCoreModuleTypeDefinition(scope *definitionScope, astType *as
 	}
 
 	return newCoreModuleTypeDefinition(
+		moduleDefs,
 		imports,
 		exports,
 	), nil
 }
 
-func astCoreImportDescToCoreType(moduleScope *definitionScope, desc ast.CoreImportDesc) (Type, error) {
+func astCoreImportDescToTypeResolver(defs *definitions, desc ast.CoreImportDesc) (typeResolver, error) {
 	switch desc := desc.(type) {
 	case *ast.CoreFuncImport:
-		funcTypeDef, err := defs(moduleScope, sortCoreType).get(desc.TypeIdx)
-		if err != nil {
-			return nil, err
-		}
-		fnType, ok := funcTypeDef.typ().(*coreFunctionType)
-		if !ok {
-			return nil, fmt.Errorf("type index %d is not a function type", desc.TypeIdx)
-		}
-		def := newTypeOnlyDefinition[*coreFunction](fnType)
-		defs(moduleScope, sortCoreFunction).add(def)
-		return fnType, nil
+		tr := newIndexTypeResolverOf[*coreFunctionType](sortCoreType, desc.TypeIdx, "")
+		def := newTypeOnlyDefinition[*coreFunction, *coreFunctionType](tr)
+		sortDefsFor(defs, sortCoreFunction).add(def)
+		return tr, nil
 	case *ast.CoreTableImport:
-		elemType, err := astRefTypeToCoreTypeDefinition(moduleScope, desc.Type.ElemType)
+		elemTypeDef, err := astRefTypeToTypeResolver(defs, desc.Type.ElemType)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert table element type: %w", err)
 		}
-		def := newTypeOnlyDefinition[*coreTable](newCoreTableType(
-			elemType.typ(),
+		tr := newCoreTableTypeResolver(
+			elemTypeDef,
 			desc.Type.Limits.Min,
 			desc.Type.Limits.Max,
-		))
-		defs(moduleScope, sortCoreTable).add(def)
-		return def.typ(), nil
+		)
+
+		def := newTypeOnlyDefinition[*coreTable, *coreTableType](tr)
+		sortDefsFor(defs, sortCoreTable).add(def)
+		return tr, nil
 	case *ast.CoreMemoryImport:
 		if desc.Type.Limits.Max != nil {
 			if *desc.Type.Limits.Max > maxMemoryPages {
@@ -276,22 +253,23 @@ func astCoreImportDescToCoreType(moduleScope *definitionScope, desc ast.CoreImpo
 		if desc.Type.Limits.Min > maxMemoryPages {
 			return nil, fmt.Errorf("memory size must be at most %d", maxMemoryPages)
 		}
-		def := newTypeOnlyDefinition[*coreMemory](newCoreMemoryType(
+		tr := newStaticTypeResolver(newCoreMemoryType(
 			desc.Type.Limits.Min,
 			desc.Type.Limits.Max,
 		))
-		defs(moduleScope, sortCoreMemory).add(def)
-		return def.typ(), nil
+		def := newTypeOnlyDefinition[*coreMemory, *coreMemoryType](tr)
+		sortDefsFor(defs, sortCoreMemory).add(def)
+		return tr, nil
 	case *ast.CoreGlobalImport:
-		valTypeDef, err := astCoreValTypeToCoreTypeDefinition(moduleScope, desc.Type.Val)
+		elementResolver, err := astCoreValTypeToTypeResolver(defs, desc.Type.Val)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert global value type: %w", err)
 		}
-		def := newTypeOnlyDefinition[*coreGlobal](
-			newCoreGlobalType(valTypeDef.typ(), bool(desc.Type.Mut)),
-		)
-		defs(moduleScope, sortCoreGlobal).add(def)
-		return def.typ(), nil
+
+		tr := newCoreGlobalTypeResolver(elementResolver, bool(desc.Type.Mut))
+		def := newTypeOnlyDefinition[*coreGlobal, *coreGlobalType](tr)
+		sortDefsFor(defs, sortCoreGlobal).add(def)
+		return tr, nil
 	case *ast.CoreTagImport:
 		return nil, fmt.Errorf("core tag imports are not supported")
 	default:

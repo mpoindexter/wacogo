@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/partite-ai/wacogo/ast"
-	"github.com/partite-ai/wacogo/testutil"
+	"github.com/partite-ai/wacogo/internal/wasmtools"
 	"github.com/partite-ai/wacogo/testutil/astmatcher"
 	"github.com/tetratelabs/wazero/api"
 )
@@ -27,7 +27,7 @@ func RunParserTests(t *testing.T, tests []TestCase) {
 			ctx := context.Background()
 
 			// Convert WAT to binary
-			wasmBinary, err := testutil.Wat2Wasm(ctx, tt.WAT)
+			wasmBinary, err := wasmtools.Wat2Wasm(ctx, tt.WAT)
 			if err != nil {
 				t.Fatalf("failed to convert WAT to binary: %v", err)
 			}

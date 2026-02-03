@@ -3,6 +3,7 @@ package componentmodel
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/partite-ai/wacogo/ast"
 	"github.com/partite-ai/wacogo/wasm"
@@ -21,9 +22,9 @@ type coreInstance struct {
 	exports map[string]*coreExport
 }
 
-func newCoreInstance(module api.Module, additionalExports *wasm.Exports) (*coreInstance, error) {
+func newCoreInstance(module api.Module, additionalExterns *wasm.Externs) (*coreInstance, error) {
 	exports := make(map[string]*coreExport)
-	for name := range additionalExports.Globals {
+	for name := range additionalExterns.Exports.Globals {
 		global := module.ExportedGlobal(name)
 		if global == nil {
 			return nil, fmt.Errorf("exported global %s not found in module", name)
@@ -38,7 +39,7 @@ func newCoreInstance(module api.Module, additionalExports *wasm.Exports) (*coreI
 		}
 	}
 
-	for name, rawType := range additionalExports.Tables {
+	for name, rawType := range additionalExterns.Exports.Tables {
 		vt, err := coreTypeWasmConstTypeFromWasmParser(rawType.ElemType)
 		if err != nil {
 			return nil, fmt.Errorf("invalid expected table element type for %s: %w", name, err)
@@ -58,7 +59,7 @@ func newCoreInstance(module api.Module, additionalExports *wasm.Exports) (*coreI
 		}
 	}
 
-	for name := range additionalExports.Memories {
+	for name := range additionalExterns.Exports.Memories {
 
 		memory := module.ExportedMemory(name)
 		if memory == nil {
@@ -90,20 +91,12 @@ func newCoreInstance(module api.Module, additionalExports *wasm.Exports) (*coreI
 	}, nil
 }
 
-func (ci *coreInstance) typ() *coreInstanceType {
-	exportTypes := make(map[string]Type)
-	for name, export := range ci.exports {
-		exportTypes[name] = export.typ
-	}
-	return newCoreInstanceType(exportTypes)
-}
-
-func (ci *coreInstance) getExport(name string) (any, Type, bool) {
+func (ci *coreInstance) getExport(name string) (any, error) {
 	export, ok := ci.exports[name]
 	if !ok {
-		return nil, nil, false
+		return nil, fmt.Errorf("core instance has no export named `%s`", name)
 	}
-	return export.val, export.typ, true
+	return export.val, nil
 }
 
 type coreInstanceType struct {
@@ -116,8 +109,10 @@ func newCoreInstanceType(exports map[string]Type) *coreInstanceType {
 	}
 }
 
-func (t *coreInstanceType) typ() Type {
-	return t
+func (c *coreInstanceType) isType() {}
+
+func (t *coreInstanceType) typeName() string {
+	return "core instance"
 }
 
 func (t *coreInstanceType) exportType(name string) (Type, bool) {
@@ -125,71 +120,124 @@ func (t *coreInstanceType) exportType(name string) (Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	return typ, true
+	return typ, ok
 }
 
-func (c *coreInstanceType) assignableFrom(other Type) bool {
-	otherInstanceType, ok := other.(*coreInstanceType)
-	if !ok {
-		return false
+func (c *coreInstanceType) checkType(other Type, typeChecker typeChecker) error {
+	oc, err := assertTypeKindIsSame(c, other)
+	if err != nil {
+		return err
 	}
 	for name, t := range c.exports {
-		otherType, ok := otherInstanceType.exports[name]
-		if !ok || !t.assignableFrom(otherType) {
-			return false
+		ot, ok := oc.exports[name]
+		if !ok {
+			return fmt.Errorf("type mismatch: missing export %s in core instance type", name)
+		}
+		if err := typeChecker.checkTypeCompatible(t, ot); err != nil {
+			return fmt.Errorf("type mismatch in export `%s`: %w", name, err)
 		}
 	}
-	return true
+	return nil
+}
+
+func (t *coreInstanceType) typeSize() int {
+	size := 1
+	for _, exportType := range t.exports {
+		size += exportType.typeSize()
+	}
+	return size
+}
+
+func (t *coreInstanceType) typeDepth() int {
+	maxDepth := 0
+	for _, exportType := range t.exports {
+		depth := exportType.typeDepth()
+		if depth > maxDepth {
+			maxDepth = depth
+		}
+	}
+	return 1 + maxDepth
 }
 
 type coreInstantiateDefinition struct {
-	moduleIndex  uint32
-	args         map[string]uint32
-	instanceType *coreInstanceType
+	astDef *ast.CoreInstantiate
 }
 
 func newCoreInstantiateDefinition(
-	moduleIndex uint32,
-	args map[string]uint32,
-	instanceType *coreInstanceType,
+	astDef *ast.CoreInstantiate,
 ) *coreInstantiateDefinition {
 	return &coreInstantiateDefinition{
-		moduleIndex:  moduleIndex,
-		args:         args,
-		instanceType: instanceType,
+		astDef: astDef,
 	}
 }
 
-func (d *coreInstantiateDefinition) typ() *coreInstanceType {
-	return d.instanceType
-}
+func (d *coreInstantiateDefinition) isDefinition() {}
 
-func (d *coreInstantiateDefinition) exportType(name string) (Type, error) {
-	et, ok := d.instanceType.exports[name]
-	if !ok {
-		return nil, fmt.Errorf("core instance has no export named `%s`", name)
-	}
-	return et, nil
-}
-
-func (d *coreInstantiateDefinition) resolve(ctx context.Context, scope *instanceScope) (*coreInstance, error) {
-	coreModDef, err := defs(scope.definitionScope, sortCoreModule).get(d.moduleIndex)
+func (d *coreInstantiateDefinition) createType(scope *scope) (*coreInstanceType, error) {
+	modType, err := sortScopeFor(scope, sortCoreModule).getType(d.astDef.ModuleIdx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unknown module type: %w", err)
 	}
-	coreMod, err := coreModDef.resolve(ctx, scope)
+
+	args := make(map[string]uint32)
+
+	requiredModuleNames := make(map[string]struct{})
+	for importName := range modType.imports {
+		requiredModuleNames[importName.module] = struct{}{}
+	}
+
+	for _, astArg := range d.astDef.Args {
+		delete(requiredModuleNames, astArg.Name)
+		if _, exists := args[astArg.Name]; exists {
+			return nil, fmt.Errorf("duplicate module instantiation argument named `%s`", astArg.Name)
+		}
+		args[astArg.Name] = astArg.CoreInstanceIdx
+
+		instanceType, err := sortScopeFor(scope, sortCoreInstance).getType(astArg.CoreInstanceIdx)
+		if err != nil {
+			return nil, err
+		}
+
+		typeChecker := newTypeChecker()
+		for importName, importType := range modType.imports {
+			if importName.module == astArg.Name {
+				itemType, ok := instanceType.exportType(importName.name)
+				if !ok {
+					return nil, fmt.Errorf("module instantiation argument `%s` does not export an item named `%s`", astArg.Name, importName.name)
+				}
+
+				if err := typeChecker.checkTypeCompatible(importType, itemType); err != nil {
+					return nil, fmt.Errorf("type mismatch: import `%s` in module %d is not assignable from export `%s` in core instance %d: %w", importName.name, d.astDef.ModuleIdx, importName.name, astArg.CoreInstanceIdx, err)
+				}
+			}
+		}
+	}
+
+	if len(requiredModuleNames) > 0 {
+		missingNames := make([]string, 0, len(requiredModuleNames))
+		for name := range requiredModuleNames {
+			missingNames = append(missingNames, name)
+		}
+		return nil, fmt.Errorf("missing module instantiation argument: %s", strings.Join(missingNames, ", "))
+	}
+
+	return newCoreInstanceType(modType.exports), nil
+}
+
+func (d *coreInstantiateDefinition) createInstance(ctx context.Context, scope *scope) (*coreInstance, error) {
+	coreMod, err := sortScopeFor(scope, sortCoreModule).getInstance(d.astDef.ModuleIdx)
 	if err != nil {
 		return nil, err
 	}
 
 	// Build instantiation arguments
 	importModules := make(map[string]api.Module)
-	for name, coreInstanceIdx := range d.args {
-		argInstance, err := resolve(ctx, scope, sortCoreInstance, coreInstanceIdx)
+	for _, arg := range d.astDef.Args {
+		argInstance, err := sortScopeFor(scope, sortCoreInstance).getInstance(arg.CoreInstanceIdx)
 		if err != nil {
 			return nil, err
 		}
-		importModules[name] = argInstance.module
+		importModules[arg.Name] = argInstance.module
 	}
 
 	cnf := wazero.NewModuleConfig().
@@ -206,37 +254,41 @@ func (d *coreInstantiateDefinition) resolve(ctx context.Context, scope *instance
 		return nil, err
 	}
 
-	return newCoreInstance(modInst, coreMod.additionalExports)
+	return newCoreInstance(modInst, coreMod.additionalExterns)
 }
 
 type coreInlineExportsDefinition struct {
-	exports      []ast.CoreInlineExport
-	instanceType *coreInstanceType
+	astDef *ast.CoreInlineExports
 }
 
 func newCoreInlineExportsDefinition(
-	exports []ast.CoreInlineExport,
-	instanceType *coreInstanceType,
+	astDef *ast.CoreInlineExports,
 ) *coreInlineExportsDefinition {
 	return &coreInlineExportsDefinition{
-		exports:      exports,
-		instanceType: instanceType,
+		astDef: astDef,
 	}
 }
 
-func (d *coreInlineExportsDefinition) typ() *coreInstanceType {
-	return d.instanceType
-}
+func (d *coreInlineExportsDefinition) isDefinition() {}
 
-func (d *coreInlineExportsDefinition) exportType(name string) (Type, error) {
-	et, ok := d.instanceType.exports[name]
-	if !ok {
-		return nil, fmt.Errorf("core instance has no export named `%s`", name)
+func (d *coreInlineExportsDefinition) createType(scope *scope) (*coreInstanceType, error) {
+
+	exportTypes := make(map[string]Type)
+	for _, export := range d.astDef.Exports {
+		if _, exists := exportTypes[export.Name]; exists {
+			return nil, fmt.Errorf("export name `%s` already defined", export.Name)
+		}
+		typ, err := typeForCoreSortIdx(scope, export.SortIdx)
+		if err != nil {
+			return nil, err
+		}
+		exportTypes[export.Name] = typ
 	}
-	return et, nil
+
+	return newCoreInstanceType(exportTypes), nil
 }
 
-func (d *coreInlineExportsDefinition) resolve(ctx context.Context, scope *instanceScope) (*coreInstance, error) {
+func (d *coreInlineExportsDefinition) createInstance(ctx context.Context, scope *scope) (*coreInstance, error) {
 	// We have to synthesize a module that imports the exported definitions and then reexports them
 	modMap := make(map[string]api.Module)
 
@@ -256,10 +308,10 @@ func (d *coreInlineExportsDefinition) resolve(ctx context.Context, scope *instan
 		Tables:   make(map[string]*wasm.TableType),
 		Globals:  make(map[string]*wasm.GlobalType),
 	}
-	for _, astExport := range d.exports {
+	for _, astExport := range d.astDef.Exports {
 		switch astExport.SortIdx.Sort {
 		case ast.CoreSortFunc:
-			fn, err := resolve(ctx, scope, sortCoreFunction, astExport.SortIdx.Idx)
+			fn, err := sortScopeFor(scope, sortCoreFunction).getInstance(astExport.SortIdx.Idx)
 			if err != nil {
 				return nil, err
 			}
@@ -290,7 +342,7 @@ func (d *coreInlineExportsDefinition) resolve(ctx context.Context, scope *instan
 			funcs.FuncTypeIndices = append(funcs.FuncTypeIndices, fnTypeIdx)
 			fnIdx++
 		case ast.CoreSortMemory:
-			mem, err := resolve(ctx, scope, sortCoreMemory, astExport.SortIdx.Idx)
+			mem, err := sortScopeFor(scope, sortCoreMemory).getInstance(astExport.SortIdx.Idx)
 			if err != nil {
 				return nil, err
 			}
@@ -322,7 +374,7 @@ func (d *coreInlineExportsDefinition) resolve(ctx context.Context, scope *instan
 			}
 			memIdx++
 		case ast.CoreSortTable:
-			table, err := resolve(ctx, scope, sortCoreTable, astExport.SortIdx.Idx)
+			table, err := sortScopeFor(scope, sortCoreTable).getInstance(astExport.SortIdx.Idx)
 			if err != nil {
 				return nil, err
 			}
@@ -346,7 +398,7 @@ func (d *coreInlineExportsDefinition) resolve(ctx context.Context, scope *instan
 			additionalExports.Tables[astExport.Name] = table.def
 			tableIdx++
 		case ast.CoreSortGlobal:
-			global, err := resolve(ctx, scope, sortCoreGlobal, astExport.SortIdx.Idx)
+			global, err := sortScopeFor(scope, sortCoreGlobal).getInstance(astExport.SortIdx.Idx)
 			if err != nil {
 				return nil, err
 			}
@@ -402,5 +454,8 @@ func (d *coreInlineExportsDefinition) resolve(ctx context.Context, scope *instan
 		return nil, err
 	}
 
-	return newCoreInstance(modInst, additionalExports)
+	return newCoreInstance(modInst, &wasm.Externs{
+		Imports: &wasm.Imports{},
+		Exports: additionalExports,
+	})
 }

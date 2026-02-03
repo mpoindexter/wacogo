@@ -1,0 +1,26 @@
+{
+  "source_filename": "src/wasmtime/strings.wast",
+  "commands": [
+    {
+      "type": "assert_uninstantiable",
+      "line": 5,
+      "filename": "strings.0.wasm",
+      "module_type": "binary",
+      "text": "unaligned pointer"
+    },
+    {
+      "type": "assert_uninstantiable",
+      "line": 41,
+      "filename": "strings.1.wasm",
+      "module_type": "binary",
+      "text": "unaligned pointer"
+    },
+    {
+      "type": "assert_uninstantiable",
+      "line": 77,
+      "filename": "strings.2.wasm",
+      "module_type": "binary",
+      "text": "string pointer/length out of bounds of memory"
+    }
+  ]
+}

@@ -21,6 +21,13 @@ func NewInstance() *Instance {
 	}
 }
 
+func NewInstanceWithBuilder(ib *componentmodel.InstanceBuilder) *Instance {
+	return &Instance{
+		instanceBuilder: ib,
+		resourceTypes:   make(map[reflect.Type]*componentmodel.ResourceType),
+	}
+}
+
 func (hi *Instance) Instance() *componentmodel.Instance {
 	return hi.instanceBuilder.Build()
 }
@@ -32,7 +39,7 @@ func (hi *Instance) AddTypeExport(name string, typ componentmodel.Type) {
 func (hi *Instance) AddFunction(name string, fn any) error {
 	fnType := reflect.TypeOf(fn)
 	if fnType.Kind() != reflect.Func {
-		return fmt.Errorf("expected a function, got %s", fnType.Kind())
+		return fmt.Errorf("expected a function, found %s", fnType.Kind())
 	}
 
 	var paramConverters []converter
@@ -85,7 +92,7 @@ func (hi *Instance) AddFunction(name string, fn any) error {
 			},
 			func(ctx context.Context, params []componentmodel.Value) (componentmodel.Value, error) {
 				if len(params) != len(paramConverters) {
-					return nil, fmt.Errorf("expected %d parameters, got %d", len(paramConverters), len(params))
+					return nil, fmt.Errorf("expected %d parameters, found %d", len(paramConverters), len(params))
 				}
 				cc := &callContext{
 					instance:     instance,

@@ -3,244 +3,131 @@ package componentmodel
 import (
 	"context"
 	"fmt"
-	"iter"
-
-	"github.com/partite-ai/wacogo/ast"
 )
 
-type definition[T any, TT Type] interface {
-	typ() TT
-	resolve(ctx context.Context, scope *instanceScope) (T, error)
+type definition[V any, T Type] interface {
+	assertDefinition
+	createType(scope *scope) (T, error)
+	createInstance(ctx context.Context, scope *scope) (V, error)
 }
 
-type sort[T any, TT Type] int
+// Used to mark definition types
+type assertDefinition interface {
+	isDefinition()
+}
 
-func (s sort[T, TT]) typeName() string {
-	switch ast.Sort(s) {
-	case ast.SortCoreFunc:
-		return "core function"
-	case ast.SortCoreMemory:
-		return "core memory"
-	case ast.SortCoreTable:
-		return "core table"
-	case ast.SortCoreGlobal:
-		return "core global"
-	case ast.SortCoreType:
-		return "core type"
-	case ast.SortCoreModule:
-		return "module"
-	case ast.SortCoreInstance:
-		return "core instance"
-	case ast.SortFunc:
-		return "function"
-	case ast.SortType:
-		return "type"
-	case ast.SortComponent:
-		return "component"
-	case ast.SortInstance:
-		return "instance"
-	default:
-		return "unknown"
+type boundDefinition[V any, T Type] struct {
+	scope       *scope
+	def         definition[V, T]
+	typ         T
+	val         V
+	valResolved bool
+}
+
+func (d *boundDefinition[V, T]) getType() T {
+	return d.typ
+}
+
+func (d *boundDefinition[V, T]) getInstance() (V, error) {
+	if !d.valResolved {
+		return d.val, fmt.Errorf("instance not resolved")
+	}
+	return d.val, nil
+}
+
+type definitions struct {
+	defs    map[any]any
+	binders []definitionBinder
+}
+
+func newDefinitions() *definitions {
+	return &definitions{
+		defs: make(map[any]any),
 	}
 }
 
-var sortCoreFunction sort[*coreFunction, *coreFunctionType] = sort[*coreFunction, *coreFunctionType](ast.SortCoreFunc)
-var sortCoreMemory sort[*coreMemory, *coreMemoryType] = sort[*coreMemory, *coreMemoryType](ast.SortCoreMemory)
-var sortCoreTable sort[*coreTable, *coreTableType] = sort[*coreTable, *coreTableType](ast.SortCoreTable)
-var sortCoreGlobal sort[*coreGlobal, *coreGlobalType] = sort[*coreGlobal, *coreGlobalType](ast.SortCoreGlobal)
-var sortCoreType sort[Type, Type] = sort[Type, Type](ast.SortCoreType)
-var sortCoreModule sort[*coreModule, *coreModuleType] = sort[*coreModule, *coreModuleType](ast.SortCoreModule)
-var sortCoreInstance sort[*coreInstance, *coreInstanceType] = sort[*coreInstance, *coreInstanceType](ast.SortCoreInstance)
-var sortFunction sort[*Function, *FunctionType] = sort[*Function, *FunctionType](ast.SortFunc)
-var sortType sort[Type, Type] = sort[Type, Type](ast.SortType)
-var sortComponent sort[*Component, *componentType] = sort[*Component, *componentType](ast.SortComponent)
-var sortInstance sort[*Instance, *instanceType] = sort[*Instance, *instanceType](ast.SortInstance)
-
-type definitionScope struct {
-	parent *definitionScope
-	defs   map[any]any
+type sortDefinitions[V any, T Type] struct {
+	definitions *definitions
+	items       []definition[V, T]
+	sort        sort[V, T]
 }
 
-func newDefinitionScope(parent *definitionScope) *definitionScope {
-	return &definitionScope{
-		parent: parent,
-		defs:   make(map[any]any),
+func (d *sortDefinitions[V, T]) get(index uint32) (definition[V, T], error) {
+	if int(index) >= len(d.items) {
+		return nil, fmt.Errorf("unknown %s: %s index out of bounds", d.sort.typeName(), d.sort.typeName())
 	}
+	return d.items[index], nil
 }
 
-type definitions[T any, TT Type] interface {
-	get(index uint32) (definition[T, TT], error)
-	add(def definition[T, TT]) uint32
-	len() int
-	iterator() iter.Seq2[int, definition[T, TT]]
+func (d *sortDefinitions[V, T]) add(def definition[V, T]) uint32 {
+	d.items = append(d.items, def)
+	d.definitions.binders = append(d.definitions.binders, &definitionBinderImpl[V, T]{def: def, sort: d.sort})
+	return uint32(len(d.items) - 1)
 }
 
-type definitionsImpl[T any, TT Type] struct {
-	defs []definition[T, TT]
-	sort sort[T, TT]
+func (d *sortDefinitions[V, T]) len() uint32 {
+	return uint32(len(d.items))
 }
 
-func (d *definitionsImpl[T, TT]) get(index uint32) (definition[T, TT], error) {
-	if int(index) >= len(d.defs) {
-		return nil, fmt.Errorf("%s index out of bounds", d.sort.typeName())
-	}
-	return d.defs[index], nil
-}
-
-func (d *definitionsImpl[T, TT]) add(def definition[T, TT]) uint32 {
-	d.defs = append(d.defs, def)
-	return uint32(len(d.defs) - 1)
-}
-
-func (d *definitionsImpl[T, TT]) iterator() iter.Seq2[int, definition[T, TT]] {
-	return func(yield func(int, definition[T, TT]) bool) {
-		for i, def := range d.defs {
-			if !yield(i, def) {
-				return
-			}
-		}
-	}
-}
-
-func (d *definitionsImpl[T, TT]) len() int {
-	return len(d.defs)
-}
-
-func defs[T any, TT Type](scope *definitionScope, sort sort[T, TT]) definitions[T, TT] {
-	defs, ok := scope.defs[sort]
+func sortDefsFor[V any, T Type](defs *definitions, sort sort[V, T]) *sortDefinitions[V, T] {
+	sortDefs, ok := defs.defs[sort]
 	if !ok {
-		newDefs := &definitionsImpl[T, TT]{
-			sort: sort,
+		newDefs := &sortDefinitions[V, T]{
+			sort:        sort,
+			definitions: defs,
 		}
-		scope.defs[sort] = newDefs
+		defs.defs[sort] = newDefs
 		return newDefs
 	}
-	return defs.(definitions[T, TT])
+	return sortDefs.(*sortDefinitions[V, T])
 }
 
-func nestedDefs[T any, TT Type](scope *definitionScope, sort sort[T, TT], nestingLevel uint32) (definitions[T, TT], error) {
-	targetScope := scope
-	for range nestingLevel {
-		if targetScope.parent == nil {
-			return nil, fmt.Errorf("invalid outer alias count of %d", nestingLevel)
-		}
-		targetScope = targetScope.parent
-	}
-	return defs(targetScope, sort), nil
+type definitionBinder interface {
+	bindType(scope *scope) error
+	bindInstance(ctx context.Context, scope *scope) error
 }
 
-func coreSortIdxDef(scope *definitionScope, sortIdx ast.CoreSortIdx) (any, Type, error) {
-	switch sortIdx.Sort {
-	case ast.CoreSortFunc:
-		def, err := defs(scope, sortCoreFunction).get(sortIdx.Idx)
-		if err != nil {
-			return nil, nil, err
-		}
-		return def, def.typ(), nil
-	case ast.CoreSortGlobal:
-		def, err := defs(scope, sortCoreGlobal).get(sortIdx.Idx)
-		if err != nil {
-			return nil, nil, err
-		}
-		return def, def.typ(), nil
-	case ast.CoreSortMemory:
-		def, err := defs(scope, sortCoreMemory).get(sortIdx.Idx)
-		if err != nil {
-			return nil, nil, err
-		}
-		return def, def.typ(), nil
-	case ast.CoreSortTable:
-		def, err := defs(scope, sortCoreTable).get(sortIdx.Idx)
-		if err != nil {
-			return nil, nil, err
-		}
-		return def, def.typ(), nil
-	case ast.CoreSortType:
-		def, err := defs(scope, sortCoreType).get(sortIdx.Idx)
-		if err != nil {
-			return nil, nil, err
-		}
-		return def, def.typ(), nil
-	case ast.CoreSortInstance:
-		def, err := defs(scope, sortCoreInstance).get(sortIdx.Idx)
-		if err != nil {
-			return nil, nil, err
-		}
-		return def, def.typ(), nil
-	case ast.CoreSortModule:
-		def, err := defs(scope, sortCoreModule).get(sortIdx.Idx)
-		if err != nil {
-			return nil, nil, err
-		}
-		return def, def.typ(), nil
-	default:
-		return nil, nil, fmt.Errorf("unsupported core export sort: %v", sortIdx.Sort)
-	}
+type definitionBinderImpl[V any, T Type] struct {
+	sort sort[V, T]
+	def  definition[V, T]
 }
 
-func sortIdxDef(scope *definitionScope, sortIdx *ast.SortIdx) (any, Type, error) {
-	switch sortIdx.Sort {
-	case ast.SortCoreFunc, ast.SortCoreGlobal, ast.SortCoreMemory, ast.SortCoreTable, ast.SortCoreType, ast.SortCoreInstance, ast.SortCoreModule:
-		return coreSortIdxDef(scope, ast.CoreSortIdx{
-			Sort: ast.CoreSort(sortIdx.Sort),
-			Idx:  sortIdx.Idx,
-		})
-	case ast.SortFunc:
-		def, err := defs(scope, sortFunction).get(sortIdx.Idx)
-		if err != nil {
-			return nil, nil, err
-		}
-		return def, def.typ(), nil
-	case ast.SortType:
-		def, err := defs(scope, sortType).get(sortIdx.Idx)
-		if err != nil {
-			return nil, nil, err
-		}
-		return def, def.typ(), nil
-	case ast.SortComponent:
-		def, err := defs(scope, sortComponent).get(sortIdx.Idx)
-		if err != nil {
-			return nil, nil, err
-		}
-		return def, def.typ(), nil
-	case ast.SortInstance:
-		def, err := defs(scope, sortInstance).get(sortIdx.Idx)
-		if err != nil {
-			return nil, nil, err
-		}
-		return def, def.typ(), nil
-	default:
-		return nil, nil, fmt.Errorf("unsupported sort: %v", sortIdx.Sort)
-	}
-}
-
-type importDefinition[T resolvedInstance[TT], TT Type] struct {
-	importName string
-	importType TT
-}
-
-func newImportDefinition[T resolvedInstance[TT], TT Type](importName string, importType TT) *importDefinition[T, TT] {
-	return &importDefinition[T, TT]{
-		importName: importName,
-		importType: importType,
-	}
-}
-
-func (d *importDefinition[T, TT]) typ() TT {
-	return d.importType
-}
-
-func (d *importDefinition[T, TT]) resolve(ctx context.Context, scope *instanceScope) (T, error) {
-	importedValue, importedType, err := scope.resolveArgument(d.importName)
+func (b *definitionBinderImpl[V, T]) bindType(scope *scope) error {
+	typ, err := b.def.createType(scope)
 	if err != nil {
-		return *new(T), err
+		return err
 	}
-	if !d.importType.assignableFrom(importedType) {
-		return *new(T), fmt.Errorf("import %s is not of expected type", d.importName)
+	if any(typ) == Type(nil) {
+		return fmt.Errorf("definition produced nil type")
 	}
-	typedVal, ok := importedValue.(T)
-	if !ok {
-		return *new(T), fmt.Errorf("export %s in import instance is not of expected type", d.importName)
+	ss := sortScopeFor(scope, b.sort)
+	ss.items = append(ss.items, &boundDefinition[V, T]{
+		scope: scope,
+		def:   b.def,
+		typ:   typ,
+	})
+	return nil
+}
+
+func (b *definitionBinderImpl[V, T]) bindInstance(ctx context.Context, scope *scope) error {
+	typ, err := b.def.createType(scope)
+	if err != nil {
+		return err
 	}
-	return typedVal, nil
+	scope.currentType = typ
+	defer func() { scope.currentType = nil }()
+
+	val, err := b.def.createInstance(ctx, scope)
+	if err != nil {
+		return err
+	}
+	ss := sortScopeFor(scope, b.sort)
+	ss.items = append(ss.items, &boundDefinition[V, T]{
+		scope:       scope,
+		def:         b.def,
+		typ:         typ,
+		val:         val,
+		valResolved: true,
+	})
+	return nil
 }

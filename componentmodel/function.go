@@ -21,10 +21,6 @@ func NewFunction(
 	}
 }
 
-func (f *Function) typ() *FunctionType {
-	return f.funcTyp
-}
-
 func (f *Function) Invoke(ctx context.Context, params ...Value) (Value, error) {
 	return f.invoke(ctx, params)
 }
@@ -35,34 +31,73 @@ type FunctionParameter struct {
 }
 
 type FunctionType struct {
-	Parameters []*FunctionParameter
-	ResultType ValueType
+	Parameters         []*FunctionParameter
+	ResultType         ValueType
+	skipParamNameCheck bool
 }
 
-func (ft *FunctionType) typ() Type {
-	return ft
+func (ft *FunctionType) isType() {}
+
+func (ft *FunctionType) typeName() string {
+	return "func"
 }
 
-func (ft *FunctionType) assignableFrom(other Type) bool {
-	otherFt, ok := other.(*FunctionType)
-	if !ok {
-		return false
+func (ft *FunctionType) checkType(other Type, typeChecker typeChecker) error {
+	oft, err := assertTypeKindIsSame(ft, other)
+	if err != nil {
+		return err
 	}
-	if len(ft.Parameters) != len(otherFt.Parameters) {
-		return false
+	if len(ft.Parameters) != len(oft.Parameters) {
+		return fmt.Errorf("type mismatch: expected %d parameters, found %d", len(ft.Parameters), len(oft.Parameters))
 	}
+	skipNameCheck := ft.skipParamNameCheck || oft.skipParamNameCheck
 	for i, param := range ft.Parameters {
-		if !param.Type.assignableFrom(otherFt.Parameters[i].Type) {
-			return false
+		if !skipNameCheck && param.Name != oft.Parameters[i].Name {
+			return fmt.Errorf("type mismatch for parameter %d: expected parameter named `%s`, found `%s`", i, param.Name, oft.Parameters[i].Name)
+		}
+		if err := typeChecker.checkTypeCompatible(param.Type, oft.Parameters[i].Type); err != nil {
+			return fmt.Errorf("type mismatch in function parameter `%s`: %w", param.Name, err)
 		}
 	}
-	if ft.ResultType == nil && otherFt.ResultType == nil {
-		return true
+	if ft.ResultType == nil && oft.ResultType == nil {
+		return nil
 	}
-	if (ft.ResultType == nil) != (otherFt.ResultType == nil) {
-		return false
+	if ft.ResultType == nil && oft.ResultType != nil {
+		return fmt.Errorf("expected no result, found a result")
+	} else if oft.ResultType == nil && ft.ResultType != nil {
+		return fmt.Errorf("expected a result, found no result")
 	}
-	return ft.ResultType.assignableFrom(otherFt.ResultType)
+
+	if err := typeChecker.checkTypeCompatible(ft.ResultType, oft.ResultType); err != nil {
+		return fmt.Errorf("type mismatch with result type: %w", err)
+	}
+	return nil
+}
+
+func (ft *FunctionType) typeSize() int {
+	size := 1 // for the function itself
+	for _, param := range ft.Parameters {
+		size += param.Type.typeSize()
+	}
+	if ft.ResultType != nil {
+		size += ft.ResultType.typeSize()
+	}
+	return size
+}
+
+func (ft *FunctionType) typeDepth() int {
+	maxDepth := 0
+	for _, param := range ft.Parameters {
+		if d := param.Type.typeDepth(); d > maxDepth {
+			maxDepth = d
+		}
+	}
+	if ft.ResultType != nil {
+		if d := ft.ResultType.typeDepth(); d > maxDepth {
+			maxDepth = d
+		}
+	}
+	return 1 + maxDepth
 }
 
 type parameterTypeResolver struct {
@@ -80,58 +115,23 @@ func newParameterTypeResolver(name string, typeResolver typeResolver) *parameter
 type functionTypeResolver struct {
 	paramTypeResolvers []*parameterTypeResolver
 	resultTypeResolver typeResolver
-	staticType         *FunctionType
 }
 
 func newFunctionTypeResolver(
 	paramTypeResolvers []*parameterTypeResolver,
 	resultTypeResolver typeResolver,
-) (*functionTypeResolver, error) {
-	paramTypes := make([]*FunctionParameter, len(paramTypeResolvers))
-	for i, paramTypeResolver := range paramTypeResolvers {
-		paramType := paramTypeResolver.typeResolver.typ()
-		paramValueType, ok := paramType.(ValueType)
-		if !ok {
-			return nil, fmt.Errorf("function param type is not a value type: %T", paramType)
-		}
-		paramTypes[i] = &FunctionParameter{
-			Name: paramTypeResolver.name,
-			Type: paramValueType,
-		}
-	}
+) *functionTypeResolver {
 
-	var funcType *FunctionType
-	if resultTypeResolver == nil {
-		funcType = &FunctionType{
-			Parameters: paramTypes,
-			ResultType: nil,
-		}
-	} else {
-		resultType := resultTypeResolver.typ()
-		resultTypes, ok := resultType.(ValueType)
-		if !ok {
-			return nil, fmt.Errorf("function result type is not a value type: %T", resultType)
-		}
-		funcType = &FunctionType{
-			Parameters: paramTypes,
-			ResultType: resultTypes,
-		}
-	}
 	return &functionTypeResolver{
 		paramTypeResolvers: paramTypeResolvers,
 		resultTypeResolver: resultTypeResolver,
-		staticType:         funcType,
-	}, nil
+	}
 }
 
-func (d *functionTypeResolver) typ() Type {
-	return d.staticType
-}
-
-func (d *functionTypeResolver) resolveType(ctx context.Context, scope *instanceScope) (Type, error) {
+func (d *functionTypeResolver) resolveType(scope *scope) (Type, error) {
 	paramDefns := make([]*FunctionParameter, len(d.paramTypeResolvers))
 	for i, paramTypeResolver := range d.paramTypeResolvers {
-		paramType, err := paramTypeResolver.typeResolver.resolveType(ctx, scope)
+		paramType, err := paramTypeResolver.typeResolver.resolveType(scope)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve function param type: %w", err)
 		}
@@ -151,7 +151,7 @@ func (d *functionTypeResolver) resolveType(ctx context.Context, scope *instanceS
 		}
 		return funcType, nil
 	}
-	resultType, err := d.resultTypeResolver.resolveType(ctx, scope)
+	resultType, err := d.resultTypeResolver.resolveType(scope)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve function result type: %w", err)
 	}
@@ -164,4 +164,18 @@ func (d *functionTypeResolver) resolveType(ctx context.Context, scope *instanceS
 		ResultType: resultTypes,
 	}
 	return funcType, nil
+}
+
+func (d *functionTypeResolver) typeInfo(sc *scope) *typeInfo {
+	size := 1
+	for _, paramTypeResolver := range d.paramTypeResolvers {
+		size += paramTypeResolver.typeResolver.typeInfo(sc).size
+	}
+	if d.resultTypeResolver != nil {
+		size += d.resultTypeResolver.typeInfo(sc).size
+	}
+	return &typeInfo{
+		typeName: "function",
+		size:     size,
+	}
 }

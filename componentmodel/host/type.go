@@ -25,7 +25,7 @@ func valueTypeFor(inst *Instance, t reflect.Type) (componentmodel.ValueType, boo
 	// Enum type - check this first as enums are convertible to string
 	if t.ConvertibleTo(reflect.TypeFor[string]()) && t.Implements(reflect.TypeFor[EnumValueProvider]()) {
 		enumValues := reflect.Zero(t).Interface().(EnumValueProvider).EnumValues()
-		return componentmodel.EnumType(enumValues...), true
+		return componentmodel.NewEnumType(enumValues...), true
 	}
 
 	switch t.Kind() {
@@ -98,6 +98,34 @@ func valueTypeFor(inst *Instance, t reflect.Type) (componentmodel.ValueType, boo
 			return nil, false
 		}
 		return &componentmodel.ListType{ElementType: elemType}, true
+	}
+
+	// Record type
+	if t.ConvertibleTo(reflect.TypeFor[RecordType]()) {
+		recordMeta := reflect.Zero(t).Interface().(interface {
+			recordMeta() *recordMetadata
+		}).recordMeta()
+		fields := make([]*componentmodel.RecordField, len(recordMeta.fieldMetas))
+		for i, fm := range recordMeta.fieldMetas {
+			fields[i] = &componentmodel.RecordField{
+				Name: fm.name,
+				Type: fm.createFieldType(inst),
+			}
+		}
+		return &componentmodel.RecordType{Fields: fields}, true
+	}
+
+	// Tuple type
+	if t.ConvertibleTo(reflect.TypeFor[TupleType]()) {
+		recordMeta := reflect.Zero(t).Interface().(interface {
+			recordMeta() *recordMetadata
+		}).recordMeta()
+		valueTypes := make([]componentmodel.ValueType, len(recordMeta.fieldMetas))
+		for i, fm := range recordMeta.fieldMetas {
+			valueTypes[i] = fm.createFieldType(inst)
+		}
+
+		return componentmodel.NewTupleType(valueTypes...), true
 	}
 
 	return nil, false

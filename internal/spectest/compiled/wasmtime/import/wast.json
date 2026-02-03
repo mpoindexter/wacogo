@@ -1,0 +1,18 @@
+{
+  "source_filename": "src/wasmtime/import.wast",
+  "commands": [
+    {
+      "type": "assert_unlinkable",
+      "line": 10,
+      "filename": "import.0.wasm",
+      "module_type": "binary",
+      "text": "expected instance, found func"
+    },
+    {
+      "type": "module",
+      "line": 17,
+      "filename": "import.1.wasm",
+      "module_type": "binary"
+    }
+  ]
+}

@@ -123,20 +123,18 @@ type recordConverter struct {
 func (rc recordConverter) toHost(cc *callContext, v componentmodel.Value) any {
 	rec := v.(componentmodel.Record)
 	rv := reflect.New(rc.typ)
-	recordImplPtr := rv.Convert(reflect.TypeFor[*recordImpl]()).Interface().(*recordImpl)
-	recordImplPtr.data = &componentRecordAccessor{
-		record: rec,
-		cc:     cc,
-	}
+	initer := rv.Interface().(interface {
+		init(target any, cc *callContext, rec componentmodel.Record)
+	})
+	initer.init(rv.Interface(), cc, rec)
 	return rv.Elem().Interface()
 }
 
 func (rc recordConverter) fromHost(cc *callContext, v any) componentmodel.Value {
-	ri := reflect.ValueOf(v).Convert(reflect.TypeFor[recordImpl]()).Interface().(recordImpl)
-	if ri.data == nil {
-		return componentmodel.Record{}
-	}
-	return ri.data.toRecord(cc)
+	toRecorder := v.(interface {
+		toRecord(*callContext) componentmodel.Record
+	})
+	return toRecorder.toRecord(cc)
 }
 
 type variantConverter struct {
@@ -261,7 +259,14 @@ func converterFor(t reflect.Type) converter {
 	}
 
 	// Record
-	if t.ConvertibleTo(reflect.TypeFor[recordImpl]()) {
+	if t.ConvertibleTo(reflect.TypeFor[RecordType]()) {
+		return recordConverter{
+			typ: t,
+		}
+	}
+
+	// Tuple
+	if t.ConvertibleTo(reflect.TypeFor[TupleType]()) {
 		return recordConverter{
 			typ: t,
 		}

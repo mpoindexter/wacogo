@@ -1,0 +1,1 @@
+(component(type (instance (type $t u8) (export "t" (type $t (eq $t))) )) )

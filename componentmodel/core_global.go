@@ -1,6 +1,8 @@
 package componentmodel
 
 import (
+	"fmt"
+
 	"github.com/tetratelabs/wazero/api"
 )
 
@@ -18,12 +20,6 @@ func newCoreGlobal(module api.Module, name string, global api.Global) *coreGloba
 	}
 }
 
-func (g *coreGlobal) typ() *coreGlobalType {
-	vt := coreTypeWasmConstTypeFromWazero(g.global.Type())
-	_, isMutable := g.global.(api.MutableGlobal)
-	return newCoreGlobalType(vt, isMutable)
-}
-
 type coreGlobalType struct {
 	valueType Type
 	mutable   bool
@@ -36,20 +32,59 @@ func newCoreGlobalType(valueType Type, mutable bool) *coreGlobalType {
 	}
 }
 
-func (t *coreGlobalType) typ() Type {
-	return t
+func (c *coreGlobalType) isType() {}
+
+func (t *coreGlobalType) typeName() string {
+	return "core global"
 }
 
-func (t *coreGlobalType) assignableFrom(other Type) bool {
-	otherGlobal, ok := other.(*coreGlobalType)
-	if !ok {
-		return false
+func (t *coreGlobalType) checkType(other Type, typeChecker typeChecker) error {
+	ot, err := assertTypeKindIsSame(t, other)
+	if err != nil {
+		return err
 	}
-	if !t.valueType.assignableFrom(otherGlobal.valueType) {
-		return false
+	if err := typeChecker.checkTypeCompatible(t.valueType, ot.valueType); err != nil {
+		return fmt.Errorf("expected global type %s, found %s", t.valueType.typeName(), ot.valueType.typeName())
 	}
-	if t.mutable != otherGlobal.mutable {
-		return false
+	if t.mutable != ot.mutable {
+		return fmt.Errorf("type mismatch: global mutability mismatch, expected %v, found %v", t.mutable, ot.mutable)
 	}
-	return true
+	return nil
+}
+
+func (t *coreGlobalType) typeSize() int {
+	return 1 + t.valueType.typeSize()
+}
+
+func (t *coreGlobalType) typeDepth() int {
+	return 1 + t.valueType.typeDepth()
+}
+
+type coreGlobalTypeResolver struct {
+	valueTypeResolver typeResolver
+	mutable           bool
+}
+
+func newCoreGlobalTypeResolver(valueTypeResolver typeResolver, mutable bool) *coreGlobalTypeResolver {
+	return &coreGlobalTypeResolver{
+		valueTypeResolver: valueTypeResolver,
+		mutable:           mutable,
+	}
+}
+
+func (r *coreGlobalTypeResolver) resolveType(scope *scope) (Type, error) {
+	valueType, err := r.valueTypeResolver.resolveType(scope)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve global value type: %w", err)
+	}
+	return newCoreGlobalType(valueType, r.mutable), nil
+}
+
+func (r *coreGlobalTypeResolver) typeInfo(scope *scope) *typeInfo {
+	ti := r.valueTypeResolver.typeInfo(scope)
+	return &typeInfo{
+		typeName: "core global",
+		size:     1 + ti.size,
+		depth:    1 + ti.depth,
+	}
 }

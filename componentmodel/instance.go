@@ -6,37 +6,62 @@ import (
 	"reflect"
 
 	"github.com/partite-ai/wacogo/ast"
+	"github.com/partite-ai/wacogo/wasm"
+	"github.com/tetratelabs/wazero"
 )
 
 type InstanceBuilder struct {
-	exports  map[string]any
-	types    map[string]Type
-	instance *Instance
+	exports     map[string]any
+	exportSpecs map[string]*exportSpec
+	instance    *Instance
 }
 
 func NewInstanceBuilder() *InstanceBuilder {
 	instance := newInstance()
 	return &InstanceBuilder{
-		exports:  instance.exports,
-		types:    instance.exportTypes,
-		instance: instance,
+		exports:     instance.exports,
+		exportSpecs: instance.exportSpecs,
+		instance:    instance,
 	}
 }
 
-func (b *InstanceBuilder) AddTypeExport(name string, typ Type) {
+func (b *InstanceBuilder) AddTypeExport(name string, typ Type) *InstanceBuilder {
 	b.exports[name] = typ
-	b.types[name] = typ
+	b.exportSpecs[name] = &exportSpec{typ: typ, sort: sortType}
+	return b
 }
 
-func (b *InstanceBuilder) AddFunctionExport(name string, fnFactory func(instance *Instance) *Function) {
+func (b *InstanceBuilder) AddFunctionExport(name string, fnFactory func(instance *Instance) *Function) *InstanceBuilder {
 	fn := fnFactory(b.instance)
+	fn.funcTyp.skipParamNameCheck = true
 	b.exports[name] = fn
-	b.types[name] = fn.typ()
+	b.exportSpecs[name] = &exportSpec{typ: fn.funcTyp, sort: sortFunction}
+	return b
+}
+
+func (b *InstanceBuilder) AddInstanceExport(name string, instance *Instance) *InstanceBuilder {
+	b.exports[name] = instance
+	b.exportSpecs[name] = &exportSpec{typ: newInstanceType(instance.exportSpecs, func() map[string]*exportSpec {
+		return instance.exportSpecs
+	}), sort: sortInstance}
+	return b
+}
+
+func (b *InstanceBuilder) AddCoreModuleExport(name string, mod wazero.CompiledModule, additionalExterns *wasm.Externs) *InstanceBuilder {
+	coreModule := newCoreModule(mod, additionalExterns)
+	b.exports[name] = coreModule
+	b.exportSpecs[name] = &exportSpec{typ: coreModule.typ(), sort: sortCoreModule}
+	return b
 }
 
 func (b *InstanceBuilder) CreateResourceType(repType reflect.Type, destructor func(ctx context.Context, res any)) *ResourceType {
-	resourceType := newResourceType(b.instance, repType, destructor)
+	resourceType := newResourceType(b.instance, destructor)
 	return resourceType
+}
+
+func (b *InstanceBuilder) Init(init func(*InstanceBuilder)) *InstanceBuilder {
+	init(b)
+	return b
 }
 
 func (b *InstanceBuilder) Build() *Instance {
@@ -45,8 +70,9 @@ func (b *InstanceBuilder) Build() *Instance {
 
 type Instance struct {
 	exports        map[string]any
-	exportTypes    map[string]Type
+	exportSpecs    map[string]*exportSpec
 	active         bool
+	mayLeave       bool
 	currentContext context.Context
 	loweredHandles *table[ResourceHandle]
 	borrowCount    uint32
@@ -55,8 +81,9 @@ type Instance struct {
 func newInstance() *Instance {
 	return &Instance{
 		exports:        make(map[string]any),
-		exportTypes:    make(map[string]Type),
+		exportSpecs:    make(map[string]*exportSpec),
 		loweredHandles: newTable[ResourceHandle](),
+		mayLeave:       true,
 	}
 }
 
@@ -79,150 +106,291 @@ func (i *Instance) exit() error {
 		panic("instance is not active")
 	}
 	if i.borrowCount > 0 {
-		return fmt.Errorf("cannot exit instance: there are still borrowed handles")
+		return fmt.Errorf("cannot leave component instance: there are still borrowed handles")
 	}
 	i.currentContext = nil
 	i.active = false
 	return nil
 }
 
-func (i *Instance) typ() *instanceType {
-	return &instanceType{
-		exports: i.exportTypes,
+func (i *Instance) preventLeave() func() {
+	i.mayLeave = false
+	return func() {
+		i.mayLeave = true
 	}
 }
 
-func (i *Instance) getExport(name string) (any, Type, error) {
+func (i *Instance) checkLeave() error {
+	if !i.mayLeave {
+		return fmt.Errorf("cannot leave component instance: leaving is currently prevented")
+	}
+	return nil
+}
+
+func (i *Instance) getExport(name string) (any, error) {
 	val, ok := i.exports[name]
 	if !ok {
-		return nil, nil, fmt.Errorf("export %s not found", name)
+		return nil, fmt.Errorf("export %s not found", name)
 	}
-	typ, ok := i.exportTypes[name]
-	if !ok {
-		return nil, nil, fmt.Errorf("export type for %s not found", name)
-	}
-	return val, typ, nil
+	return val, nil
 }
 
 type instanceType struct {
-	exports map[string]Type
+	exports map[string]*exportSpec
+	newCopy func() map[string]*exportSpec
 }
 
-func newInstanceType(exports map[string]Type) *instanceType {
+func newInstanceType(exports map[string]*exportSpec, newCopy func() map[string]*exportSpec) *instanceType {
 	return &instanceType{
 		exports: exports,
+		newCopy: newCopy,
 	}
 }
 
-func (it *instanceType) typ() Type {
+func (it *instanceType) clone() *instanceType {
+	if it.newCopy != nil {
+		return &instanceType{
+			exports: it.newCopy(),
+		}
+	}
 	return it
 }
 
+func (it *instanceType) isType() {}
+
+func (it *instanceType) typeName() string {
+	return "instance"
+}
+
 func (it *instanceType) exportType(name string) (Type, bool) {
-	et, ok := it.exports[name]
+	spec, ok := it.exports[name]
 	if !ok {
 		return nil, false
 	}
-	return et, true
+	return spec.typ, ok
 }
 
-func (it *instanceType) assignableFrom(other Type) bool {
-	otherIt, ok := other.(*instanceType)
-	if !ok {
-		return false
+func (it *instanceType) checkType(other Type, typeChecker typeChecker) error {
+	oit, err := assertTypeKindIsSame(it, other)
+	if err != nil {
+		return err
 	}
 
-	// all exports in this type are present in the other type
-	for name, exportType := range it.exports {
-		otherExportType, ok := otherIt.exports[name]
-		if !ok || !exportType.assignableFrom(otherExportType) {
-			return false
+	// all exports in this type are present in the other type, unless they are statically
+	// known
+	for name, exportSpec := range it.exports {
+		otherExportSpec, ok := oit.exports[name]
+		if !ok {
+			if exportSpec.sort == sortType && isStaticallyKnownType(exportSpec.typ) {
+				continue
+			}
+			return fmt.Errorf("type mismatch: missing expected export `%s` in instance type", name)
+		}
+
+		if exportSpec.sort != otherExportSpec.sort {
+			return fmt.Errorf("type mismatch in instance export `%s`: expected %s, found %s", name, exportSpec.typ.typeName(), otherExportSpec.sort.typeName())
+		}
+		if err := typeChecker.checkTypeCompatible(exportSpec.typ, otherExportSpec.typ); err != nil {
+			return fmt.Errorf("type mismatch in instance export `%s`: %w", name, err)
 		}
 	}
-	return true
+	return nil
+}
+
+func (it *instanceType) typeSize() int {
+	size := 1
+	for _, exportSpec := range it.exports {
+		size += exportSpec.typ.typeSize()
+	}
+	return size
+}
+
+func (it *instanceType) typeDepth() int {
+	maxDepth := 0
+	for _, exportSpec := range it.exports {
+		if d := exportSpec.typ.typeDepth(); d > maxDepth {
+			maxDepth = d
+		}
+	}
+	return 1 + maxDepth
 }
 
 type instantiateDefinition struct {
-	componentIdx uint32
-	args         []ast.InstantiateArg
-	instanceType *instanceType
+	astDef *ast.Instantiate
 }
 
-func newInstantiateDefinition(componentIdx uint32, args []ast.InstantiateArg, instanceType *instanceType) *instantiateDefinition {
+func newInstantiateDefinition(astDef *ast.Instantiate) *instantiateDefinition {
 	return &instantiateDefinition{
-		componentIdx: componentIdx,
-		args:         args,
-		instanceType: instanceType,
+		astDef: astDef,
 	}
 }
 
-func (d *instantiateDefinition) typ() *instanceType {
-	return d.instanceType
-}
+func (d *instantiateDefinition) isDefinition() {}
 
-func (d *instantiateDefinition) exportType(name string) (Type, bool) {
-	et, ok := d.instanceType.exports[name]
-	if !ok {
-		return nil, false
+func (d *instantiateDefinition) createType(scope *scope) (*instanceType, error) {
+	componentType, err := sortScopeFor(scope, sortComponent).getType(d.astDef.ComponentIdx)
+	if err != nil {
+		return nil, fmt.Errorf("unknown component: %w", err)
 	}
-	return et, true
+
+	argTypes := make(map[string]Type)
+	for _, astArg := range d.astDef.Args {
+		typ, err := typeForSortIdx(scope, astArg.SortIdx)
+		if err != nil {
+			return nil, err
+		}
+		argTypes[astArg.Name] = typ
+	}
+
+	requiredArgs := componentType.imports
+
+	typeChecker := newTypeChecker()
+	for argName, expectedArgType := range requiredArgs {
+		actualType, ok := resolveArgumentValue(argTypes, argName)
+		if !ok {
+			return nil, fmt.Errorf("missing import named `%s`", argName)
+		}
+		if err := typeChecker.checkTypeCompatible(expectedArgType, actualType); err != nil {
+			return nil, fmt.Errorf("type mismatch for import `%s`: expected %s, found %s: %w", argName, expectedArgType.typeName(), actualType.typeName(), err)
+		}
+	}
+
+	return componentType.instanceType(scope, argTypes)
 }
 
-func (d *instantiateDefinition) resolve(ctx context.Context, scope *instanceScope) (*Instance, error) {
+func (d *instantiateDefinition) createInstance(ctx context.Context, scope *scope) (*Instance, error) {
+	comp, err := sortScopeFor(scope, sortComponent).getInstance(d.astDef.ComponentIdx)
+	if err != nil {
+		return nil, err
+	}
 	args := make(map[string]*instanceArgument)
-	for _, astArg := range d.args {
-		val, typ, err := resolveSortIdx(ctx, scope, astArg.SortIdx)
+	for _, astArg := range d.astDef.Args {
+		val, err := instanceForSortIdx(scope, astArg.SortIdx)
+		if err != nil {
+			return nil, err
+		}
+		typ, err := typeForSortIdx(scope, astArg.SortIdx)
 		if err != nil {
 			return nil, err
 		}
 		args[astArg.Name] = &instanceArgument{val: val, typ: typ}
 	}
-	childComp, err := resolve(ctx, scope, sortComponent, d.componentIdx)
+
+	inst, err := comp.instantiate(ctx, args)
 	if err != nil {
 		return nil, err
 	}
-	childInst, err := childComp.instantiate(ctx, args, scope)
-	if err != nil {
-		return nil, err
-	}
-	return childInst, nil
+	return inst, nil
 }
 
 type inlineExportsDefinition struct {
-	exports     []ast.InlineExport
-	exportTypes map[string]Type
+	exports []ast.InlineExport
 }
 
-func newInlineExportsDefinition(exports []ast.InlineExport, exportTypes map[string]Type) *inlineExportsDefinition {
+func newInlineExportsDefinition(exports []ast.InlineExport) *inlineExportsDefinition {
 	return &inlineExportsDefinition{
-		exports:     exports,
-		exportTypes: exportTypes,
+		exports: exports,
 	}
 }
 
-func (d *inlineExportsDefinition) typ() *instanceType {
-	return newInstanceType(d.exportTypes)
-}
+func (d *inlineExportsDefinition) isDefinition() {}
 
-func (d *inlineExportsDefinition) exportType(name string) (Type, bool) {
-	et, ok := d.exportTypes[name]
-	if !ok {
-		return nil, false
+func (d *inlineExportsDefinition) createType(scope *scope) (*instanceType, error) {
+	exportSpecs := make(map[string]*exportSpec)
+	for _, export := range d.exports {
+		typ, err := typeForSortIdx(scope, &export.SortIdx)
+		if err != nil {
+			return nil, err
+		}
+		exportSpecs[export.Name] = &exportSpec{typ: typ, sort: sortForSortID(uint32(export.SortIdx.Sort))}
 	}
-	return et, true
+
+	return newInstanceType(exportSpecs, nil), nil
 }
 
-func (d *inlineExportsDefinition) resolve(ctx context.Context, scope *instanceScope) (*Instance, error) {
+func (d *inlineExportsDefinition) createInstance(ctx context.Context, scope *scope) (*Instance, error) {
 	instance := newInstance()
 
 	for _, export := range d.exports {
-		val, typ, err := resolveSortIdx(ctx, scope, &export.SortIdx)
+		val, err := instanceForSortIdx(scope, &export.SortIdx)
+		if err != nil {
+			return nil, err
+		}
+		typ, err := typeForSortIdx(scope, &export.SortIdx)
 		if err != nil {
 			return nil, err
 		}
 		instance.exports[export.Name] = val
-		instance.exportTypes[export.Name] = typ
+		instance.exportSpecs[export.Name] = &exportSpec{typ: typ, sort: sortForSortID(uint32(export.SortIdx.Sort))}
 	}
 
 	return instance, nil
+}
+
+type instanceTypeResolver struct {
+	definitions *definitions
+	exports     map[string]componentExport
+}
+
+func newInstanceTypeResolver(definitions *definitions, exports map[string]componentExport) *instanceTypeResolver {
+	return &instanceTypeResolver{
+		definitions: definitions,
+		exports:     exports,
+	}
+}
+
+func (r *instanceTypeResolver) resolveType(scope *scope) (Type, error) {
+	makeExports := func() (map[string]*exportSpec, error) {
+		instanceScope := scope.componentScope(nil)
+		for _, binder := range r.definitions.binders {
+			if err := binder.bindType(instanceScope); err != nil {
+				return nil, err
+			}
+		}
+		exportSpecs := make(map[string]*exportSpec)
+		for name, export := range r.exports {
+			typ, err := export.typ(instanceScope)
+			if err != nil {
+				return nil, err
+			}
+
+			if it, ok := typ.(*instanceType); ok {
+				typ = it.clone()
+			}
+
+			exportSpecs[name] = &exportSpec{typ: typ, sort: export.sort()}
+		}
+
+		return exportSpecs, nil
+	}
+
+	exportSpecs, err := makeExports()
+	if err != nil {
+		return nil, err
+	}
+
+	it := newInstanceType(exportSpecs, func() map[string]*exportSpec {
+		ets, _ := makeExports()
+		return ets
+	})
+	if it.typeSize() > maxTypeSize {
+		return nil, fmt.Errorf("effective type size exceeds the limit")
+	}
+	return it, nil
+}
+
+func (r *instanceTypeResolver) typeInfo(scope *scope) *typeInfo {
+	size := 1
+	for _, export := range r.exports {
+		typ, err := export.typ(scope)
+		if err != nil {
+			// Handle error appropriately, possibly returning nil or logging
+			continue
+		}
+		size += typ.typeSize()
+	}
+	return &typeInfo{
+		typeName: "instance",
+		size:     size,
+	}
 }

@@ -1,0 +1,60 @@
+{
+  "source_filename": "src/values/trap-in-post-return.wast",
+  "commands": [
+    {
+      "type": "module_definition",
+      "line": 6,
+      "name": "Tester",
+      "filename": "trap-in-post-return.0.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module_instance",
+      "line": 197,
+      "instance": "i1",
+      "module": "Tester"
+    },
+    {
+      "type": "assert_trap",
+      "line": 198,
+      "action": {
+        "type": "invoke",
+        "field": "trap-calling-import",
+        "args": []
+      },
+      "text": "cannot leave component instance"
+    },
+    {
+      "type": "module_instance",
+      "line": 199,
+      "instance": "i2",
+      "module": "Tester"
+    },
+    {
+      "type": "assert_trap",
+      "line": 200,
+      "action": {
+        "type": "invoke",
+        "field": "trap-calling-resource-new",
+        "args": []
+      },
+      "text": "cannot leave component instance"
+    },
+    {
+      "type": "module_instance",
+      "line": 201,
+      "instance": "i3",
+      "module": "Tester"
+    },
+    {
+      "type": "assert_trap",
+      "line": 202,
+      "action": {
+        "type": "invoke",
+        "field": "trap-calling-resource-drop",
+        "args": []
+      },
+      "text": "cannot leave component instance"
+    }
+  ]
+}

@@ -47,79 +47,79 @@ func (IpAddressFamily) EnumValues() []string {
 	}
 }
 
-type IpV4Address host.Record[IpV4Address]
+type IpV4Address host.Tuple[struct {
+	A host.TupleField[IpV4Address, uint8]
+	B host.TupleField[IpV4Address, uint8]
+	C host.TupleField[IpV4Address, uint8]
+	D host.TupleField[IpV4Address, uint8]
+}]
 
 func NewIpV4Address(addr net.IP) IpV4Address {
 	if len(addr) != net.IPv4len {
 		addr = make([]byte, net.IPv4len)
 	}
-	return host.RecordConstruct[IpV4Address](
-		host.RecordField("", addr[0]),
-		host.RecordField("", addr[1]),
-		host.RecordField("", addr[2]),
-		host.RecordField("", addr[3]),
-	)
-}
-
-func (a IpV4Address) ValueType(inst *host.Instance) componentmodel.ValueType {
-	return host.RecordType[IpV4Address](
-		inst,
-		NewIpV4Address,
-	)
+	tpl := host.NewTuple[IpV4Address]()
+	tpl.Fields.A.Set(tpl, uint8(addr[0]))
+	tpl.Fields.B.Set(tpl, uint8(addr[1]))
+	tpl.Fields.C.Set(tpl, uint8(addr[2]))
+	tpl.Fields.D.Set(tpl, uint8(addr[3]))
+	return tpl.Tuple()
 }
 
 func (a IpV4Address) ToNetIP() net.IP {
 	return net.IPv4(
-		host.RecordFieldGetIndex[uint8](a, 0),
-		host.RecordFieldGetIndex[uint8](a, 1),
-		host.RecordFieldGetIndex[uint8](a, 2),
-		host.RecordFieldGetIndex[uint8](a, 3),
+		a.Fields.A.Get(a),
+		a.Fields.B.Get(a),
+		a.Fields.C.Get(a),
+		a.Fields.D.Get(a),
 	)
 }
 
-type IpV6Address host.Record[IpV6Address]
+type IpV6Address host.Tuple[struct {
+	A host.TupleField[IpV6Address, uint16]
+	B host.TupleField[IpV6Address, uint16]
+	C host.TupleField[IpV6Address, uint16]
+	D host.TupleField[IpV6Address, uint16]
+	E host.TupleField[IpV6Address, uint16]
+	F host.TupleField[IpV6Address, uint16]
+	G host.TupleField[IpV6Address, uint16]
+	H host.TupleField[IpV6Address, uint16]
+}]
 
 func NewIpV6Address(addr net.IP) IpV6Address {
 	if len(addr) != net.IPv6len {
 		addr = make([]byte, net.IPv6len)
 	}
-	return host.RecordConstruct[IpV6Address](
-		host.RecordField("", uint16(addr[0])<<8|uint16(addr[1])),
-		host.RecordField("", uint16(addr[2])<<8|uint16(addr[3])),
-		host.RecordField("", uint16(addr[4])<<8|uint16(addr[5])),
-		host.RecordField("", uint16(addr[6])<<8|uint16(addr[7])),
-		host.RecordField("", uint16(addr[8])<<8|uint16(addr[9])),
-		host.RecordField("", uint16(addr[10])<<8|uint16(addr[11])),
-		host.RecordField("", uint16(addr[12])<<8|uint16(addr[13])),
-		host.RecordField("", uint16(addr[14])<<8|uint16(addr[15])),
-	)
-}
-
-func (a IpV6Address) ValueType(inst *host.Instance) componentmodel.ValueType {
-	return host.RecordType[IpV6Address](
-		inst,
-		NewIpV6Address,
-	)
+	tpl := host.NewTuple[IpV6Address]()
+	tpl.Fields.A.Set(tpl, uint16(addr[0])<<8|uint16(addr[1]))
+	tpl.Fields.B.Set(tpl, uint16(addr[2])<<8|uint16(addr[3]))
+	tpl.Fields.C.Set(tpl, uint16(addr[4])<<8|uint16(addr[5]))
+	tpl.Fields.D.Set(tpl, uint16(addr[6])<<8|uint16(addr[7]))
+	tpl.Fields.E.Set(tpl, uint16(addr[8])<<8|uint16(addr[9]))
+	tpl.Fields.F.Set(tpl, uint16(addr[10])<<8|uint16(addr[11]))
+	tpl.Fields.G.Set(tpl, uint16(addr[12])<<8|uint16(addr[13]))
+	tpl.Fields.H.Set(tpl, uint16(addr[14])<<8|uint16(addr[15]))
+	return tpl.Tuple()
 }
 
 func (a IpV6Address) ToNetIP() net.IP {
 	return net.IP{
-		byte(host.RecordFieldGetIndex[uint16](a, 0) >> 8),
-		byte(host.RecordFieldGetIndex[uint16](a, 0) & 0xff),
-		byte(host.RecordFieldGetIndex[uint16](a, 1) >> 8),
-		byte(host.RecordFieldGetIndex[uint16](a, 1) & 0xff),
-		byte(host.RecordFieldGetIndex[uint16](a, 2) >> 8),
-		byte(host.RecordFieldGetIndex[uint16](a, 2) & 0xff),
-		byte(host.RecordFieldGetIndex[uint16](a, 3) >> 8),
-		byte(host.RecordFieldGetIndex[uint16](a, 3) & 0xff),
-		byte(host.RecordFieldGetIndex[uint16](a, 4) >> 8),
-		byte(host.RecordFieldGetIndex[uint16](a, 4) & 0xff),
-		byte(host.RecordFieldGetIndex[uint16](a, 5) >> 8),
-		byte(host.RecordFieldGetIndex[uint16](a, 5) & 0xff),
-		byte(host.RecordFieldGetIndex[uint16](a, 6) >> 8),
-		byte(host.RecordFieldGetIndex[uint16](a, 6) & 0xff),
-		byte(host.RecordFieldGetIndex[uint16](a, 7) >> 8),
-		byte(host.RecordFieldGetIndex[uint16](a, 7) & 0xff),
+		byte(a.Fields.A.Get(a) >> 8),
+		byte(a.Fields.A.Get(a) & 0xff),
+		byte(a.Fields.B.Get(a) >> 8),
+		byte(a.Fields.B.Get(a) & 0xff),
+		byte(a.Fields.C.Get(a) >> 8),
+		byte(a.Fields.C.Get(a) & 0xff),
+		byte(a.Fields.D.Get(a) >> 8),
+		byte(a.Fields.D.Get(a) & 0xff),
+		byte(a.Fields.E.Get(a) >> 8),
+		byte(a.Fields.E.Get(a) & 0xff),
+		byte(a.Fields.F.Get(a) >> 8),
+		byte(a.Fields.F.Get(a) & 0xff),
+		byte(a.Fields.G.Get(a) >> 8),
+		byte(a.Fields.G.Get(a) & 0xff),
+		byte(a.Fields.H.Get(a) >> 8),
+		byte(a.Fields.H.Get(a) & 0xff),
 	}
 }
 
@@ -147,62 +147,32 @@ func IpAddressIPV6(addr IpV6Address) IpAddress {
 	)
 }
 
-type IpV4SocketAddress host.Record[IpV4SocketAddress]
+type IpV4SocketAddress host.Record[struct {
+	Port    host.RecordField[IpV4SocketAddress, uint16]
+	Address host.RecordField[IpV4SocketAddress, IpV4Address]
+}]
 
 func NewIpV4SocketAddress(port uint16, address IpV4Address) IpV4SocketAddress {
-	return host.RecordConstruct[IpV4SocketAddress](
-		host.RecordField("port", port),
-		host.RecordField("address", address),
-	)
+	rec := host.NewRecord[IpV4SocketAddress]()
+	rec.Fields.Port.Set(rec, port)
+	rec.Fields.Address.Set(rec, address)
+	return rec.Record()
 }
 
-func (a IpV4SocketAddress) ValueType(inst *host.Instance) componentmodel.ValueType {
-	return host.RecordType[IpV4SocketAddress](
-		inst,
-		NewIpV4SocketAddress,
-	)
-}
-
-func (a IpV4SocketAddress) Port() uint16 {
-	return host.RecordFieldGetIndex[uint16](a, 0)
-}
-
-func (a IpV4SocketAddress) Address() IpV4Address {
-	return host.RecordFieldGetIndex[IpV4Address](a, 1)
-}
-
-type IpV6SocketAddress host.Record[IpV6SocketAddress]
+type IpV6SocketAddress host.Record[struct {
+	Port     host.RecordField[IpV6SocketAddress, uint16]
+	FlowInfo host.RecordField[IpV6SocketAddress, uint32] `cm:"flow-info"`
+	Address  host.RecordField[IpV6SocketAddress, IpV6Address]
+	ScopeID  host.RecordField[IpV6SocketAddress, uint32] `cm:"scope-id"`
+}]
 
 func NewIpV6SocketAddress(port uint16, flowInfo uint32, address IpV6Address, scopeID uint32) IpV6SocketAddress {
-	return host.RecordConstruct[IpV6SocketAddress](
-		host.RecordField("port", port),
-		host.RecordField("flow-info", flowInfo),
-		host.RecordField("address", address),
-		host.RecordField("scope-id", scopeID),
-	)
-}
-
-func (a IpV6SocketAddress) ValueType(inst *host.Instance) componentmodel.ValueType {
-	return host.RecordType[IpV6SocketAddress](
-		inst,
-		NewIpV6SocketAddress,
-	)
-}
-
-func (a IpV6SocketAddress) Port() uint16 {
-	return host.RecordFieldGetIndex[uint16](a, 0)
-}
-
-func (a IpV6SocketAddress) FlowInfo() uint32 {
-	return host.RecordFieldGetIndex[uint32](a, 1)
-}
-
-func (a IpV6SocketAddress) Address() IpV6Address {
-	return host.RecordFieldGetIndex[IpV6Address](a, 2)
-}
-
-func (a IpV6SocketAddress) ScopeID() uint32 {
-	return host.RecordFieldGetIndex[uint32](a, 3)
+	rec := host.NewRecord[IpV6SocketAddress]()
+	rec.Fields.Port.Set(rec, port)
+	rec.Fields.FlowInfo.Set(rec, flowInfo)
+	rec.Fields.Address.Set(rec, address)
+	rec.Fields.ScopeID.Set(rec, scopeID)
+	return rec.Record()
 }
 
 type IpSocketAddress host.Variant[IpSocketAddress]

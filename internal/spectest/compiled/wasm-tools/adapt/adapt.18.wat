@@ -1,0 +1,1 @@
+(component(import "a" (func $f)) (func (export "foo") (canon lift (core func $f))) )

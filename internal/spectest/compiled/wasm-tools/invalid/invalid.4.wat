@@ -1,0 +1,1 @@
+(component(import "x" (func $x)) (component (export "x" (func $x))) )

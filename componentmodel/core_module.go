@@ -10,13 +10,13 @@ import (
 
 type coreModule struct {
 	module            wazero.CompiledModule
-	additionalExports *wasm.Exports
+	additionalExterns *wasm.Externs
 }
 
-func newCoreModule(module wazero.CompiledModule, additionalExports *wasm.Exports) *coreModule {
+func newCoreModule(module wazero.CompiledModule, additionalExterns *wasm.Externs) *coreModule {
 	return &coreModule{
 		module:            module,
-		additionalExports: additionalExports,
+		additionalExterns: additionalExterns,
 	}
 }
 
@@ -32,54 +32,46 @@ func (m *coreModule) typ() *coreModuleType {
 		}] = wazeroFunctionDefinitionToCoreFunctionType(importDef)
 	}
 
-	for _, importDef := range m.module.ImportedMemories() {
-		modName, name, _ := importDef.Import()
+	for name, importDef := range m.additionalExterns.Imports.Tables {
 		imports[moduleName{
-			module: modName,
-			name:   name,
-		}] = wazeroMemoryDefinitionToCoreMemoryType(importDef)
+			module: name.Module,
+			name:   name.Name,
+		}] = wasmTableTypeToCoreTableType(importDef)
+	}
+
+	for name, importDef := range m.additionalExterns.Imports.Globals {
+		vt, _ := coreTypeWasmConstTypeFromWasmParser(importDef.ValType)
+		imports[moduleName{
+			module: name.Module,
+			name:   name.Name,
+		}] = newCoreGlobalType(vt, importDef.Mutable)
+	}
+
+	for name, importDef := range m.additionalExterns.Imports.Memories {
+		imports[moduleName{
+			module: name.Module,
+			name:   name.Name,
+		}] = wasmMemoryTypeToCoreMemoryType(importDef)
 	}
 
 	for name, exportDef := range m.module.ExportedFunctions() {
 		exports[name] = wazeroFunctionDefinitionToCoreFunctionType(exportDef)
 	}
 
-	for name, exportDef := range m.module.ExportedMemories() {
-		exports[name] = wazeroMemoryDefinitionToCoreMemoryType(exportDef)
-	}
-
-	for name, exportDef := range m.additionalExports.Tables {
+	for name, exportDef := range m.additionalExterns.Exports.Tables {
 		exports[name] = wasmTableTypeToCoreTableType(exportDef)
 	}
 
-	for name, exportDef := range m.additionalExports.Globals {
+	for name, exportDef := range m.additionalExterns.Exports.Globals {
 		vt, _ := coreTypeWasmConstTypeFromWasmParser(exportDef.ValType)
 		exports[name] = newCoreGlobalType(vt, exportDef.Mutable)
 	}
 
-	for name, exportDef := range m.additionalExports.Memories {
+	for name, exportDef := range m.additionalExterns.Exports.Memories {
 		exports[name] = wasmMemoryTypeToCoreMemoryType(exportDef)
 	}
 
 	return newCoreModuleType(imports, exports)
-}
-
-type coreModuleStaticDefinition struct {
-	coreModule *coreModule
-}
-
-func newCoreModuleStaticDefinition(coreMod *coreModule) *coreModuleStaticDefinition {
-	return &coreModuleStaticDefinition{
-		coreModule: coreMod,
-	}
-}
-
-func (d *coreModuleStaticDefinition) typ() *coreModuleType {
-	return d.coreModule.typ()
-}
-
-func (d *coreModuleStaticDefinition) resolve(ctx context.Context, scope *instanceScope) (*coreModule, error) {
-	return d.coreModule, nil
 }
 
 type moduleName struct {
@@ -88,47 +80,53 @@ type moduleName struct {
 }
 
 type coreModuleTypeDefinition struct {
-	imports map[moduleName]definition[Type, Type]
-	exports map[string]definition[Type, Type]
+	imports map[moduleName]typeResolver
+	exports map[string]typeResolver
+	defs    *definitions
 }
 
-func newCoreModuleTypeDefinition(imports map[moduleName]definition[Type, Type], exports map[string]definition[Type, Type]) *coreModuleTypeDefinition {
+func newCoreModuleTypeDefinition(defs *definitions, imports map[moduleName]typeResolver, exports map[string]typeResolver) *coreModuleTypeDefinition {
 	return &coreModuleTypeDefinition{
 		imports: imports,
 		exports: exports,
+		defs:    defs,
 	}
 }
 
-func (d *coreModuleTypeDefinition) typ() Type {
-	imports := make(map[moduleName]Type)
-	for name, importDef := range d.imports {
-		imports[name] = importDef.typ()
-	}
-	exports := make(map[string]Type)
-	for name, exportDef := range d.exports {
-		exports[name] = exportDef.typ()
-	}
-	return newCoreModuleType(imports, exports)
-}
+func (d *coreModuleTypeDefinition) isDefinition() {}
 
-func (d *coreModuleTypeDefinition) resolve(ctx context.Context, scope *instanceScope) (Type, error) {
+func (d *coreModuleTypeDefinition) createType(scope *scope) (Type, error) {
+	placeholderArgs := make(map[string]Type)
+	for name := range d.imports {
+		placeholderArgs[name.name] = importPlaceholderType{}
+	}
+	modTypeScope := scope.componentScope(placeholderArgs)
+	for _, binder := range d.defs.binders {
+		if err := binder.bindType(modTypeScope); err != nil {
+			return nil, err
+		}
+	}
 	imports := make(map[moduleName]Type)
 	for name, importDef := range d.imports {
-		ct, err := importDef.resolve(ctx, scope)
+		t, err := importDef.resolveType(modTypeScope)
 		if err != nil {
-			return nil, fmt.Errorf("failed to resolve import %s.%s: %w", name.module, name.name, err)
+			return nil, err
 		}
-		imports[name] = ct
+		imports[name] = t
 	}
 	exports := make(map[string]Type)
 	for name, exportDef := range d.exports {
-		ct, err := exportDef.resolve(ctx, scope)
+		t, err := exportDef.resolveType(modTypeScope)
 		if err != nil {
-			return nil, fmt.Errorf("failed to resolve export %s: %w", name, err)
+			return nil, err
 		}
-		exports[name] = ct
+		exports[name] = t
 	}
 	return newCoreModuleType(imports, exports), nil
+}
+
+func (d *coreModuleTypeDefinition) createInstance(ctx context.Context, scope *scope) (Type, error) {
+	return scope.currentType, nil
 }
 
 type coreModuleType struct {
@@ -143,30 +141,67 @@ func newCoreModuleType(imports map[moduleName]Type, exports map[string]Type) *co
 	}
 }
 
-func (t *coreModuleType) typ() Type {
-	return t
+func (c *coreModuleType) isType() {}
+
+func (c *coreModuleType) typeName() string {
+	return "module"
 }
 
-func (c *coreModuleType) assignableFrom(other Type) bool {
-	otherModuleType, ok := other.(*coreModuleType)
-	if !ok {
-		return false
+func (c *coreModuleType) checkType(other Type, typeChecker typeChecker) error {
+	oc, err := assertTypeKindIsSame(c, other)
+	if err != nil {
+		return err
 	}
 
 	// Assignable if other imports are a subset of this imports
-	for name, t := range otherModuleType.imports {
-		thisType, ok := c.imports[name]
-		if !ok || !t.assignableFrom(thisType) {
-			return false
+	for name, oit := range oc.imports {
+		it, ok := c.imports[name]
+		if !ok {
+			return fmt.Errorf("type mismatch: missing expected import `%s::%s` in core module type", name.module, name.name)
+		}
+		if err := typeChecker.checkTypeCompatible(oit, it); err != nil {
+			return fmt.Errorf("type mismatch in import `%s::%s`: %w", name.module, name.name, err)
 		}
 	}
 
 	// Assignable if this exports are a subset of other exports
-	for name, t := range c.exports {
-		otherType, ok := otherModuleType.exports[name]
-		if !ok || !t.assignableFrom(otherType) {
-			return false
+	for name, et := range c.exports {
+		oet, ok := oc.exports[name]
+		if !ok {
+			return fmt.Errorf("type mismatch: missing expected export `%s` in core module type", name)
+		}
+
+		if err := typeChecker.checkTypeCompatible(et, oet); err != nil {
+			return fmt.Errorf("type mismatch in export `%s`: %w", name, err)
 		}
 	}
-	return true
+	return nil
+}
+
+func (c *coreModuleType) typeSize() int {
+	size := 1
+	for _, importType := range c.imports {
+		size += importType.typeSize()
+	}
+	for _, exportType := range c.exports {
+		size += exportType.typeSize()
+	}
+	return size
+}
+
+func (c *coreModuleType) typeDepth() int {
+	maxDepth := 0
+	for _, importType := range c.imports {
+		depth := importType.typeDepth()
+		if depth > maxDepth {
+			maxDepth = depth
+		}
+	}
+	for _, exportType := range c.exports {
+		depth := exportType.typeDepth()
+		if depth > maxDepth {
+			maxDepth = depth
+		}
+	}
+	return 1 + maxDepth
 }

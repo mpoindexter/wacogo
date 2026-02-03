@@ -1,0 +1,182 @@
+{
+  "source_filename": "src/wasmtime/instance.wast",
+  "commands": [
+    {
+      "type": "module",
+      "line": 1,
+      "filename": "instance.0.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module",
+      "line": 6,
+      "filename": "instance.1.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module",
+      "line": 18,
+      "filename": "instance.2.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module",
+      "line": 34,
+      "filename": "instance.3.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module",
+      "line": 71,
+      "filename": "instance.4.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "assert_uninstantiable",
+      "line": 79,
+      "filename": "instance.5.wasm",
+      "module_type": "binary",
+      "text": "unreachable"
+    },
+    {
+      "type": "module",
+      "line": 104,
+      "filename": "instance.6.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module",
+      "line": 130,
+      "filename": "instance.7.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module",
+      "line": 161,
+      "filename": "instance.8.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module",
+      "line": 182,
+      "filename": "instance.9.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module",
+      "line": 191,
+      "filename": "instance.10.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module",
+      "line": 216,
+      "filename": "instance.11.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module",
+      "line": 224,
+      "filename": "instance.12.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module",
+      "line": 255,
+      "filename": "instance.13.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module",
+      "line": 260,
+      "filename": "instance.14.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module",
+      "line": 265,
+      "filename": "instance.15.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module_definition",
+      "line": 271,
+      "name": "C1",
+      "filename": "instance.16.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module_definition",
+      "line": 275,
+      "name": "C2",
+      "filename": "instance.17.wasm",
+      "module_type": "binary"
+    },
+    {
+      "type": "module_instance",
+      "line": 280,
+      "instance": "I1",
+      "module": "C1"
+    },
+    {
+      "type": "module_instance",
+      "line": 281,
+      "instance": "I2",
+      "module": "C1"
+    },
+    {
+      "type": "module_instance",
+      "line": 282,
+      "instance": "I3",
+      "module": "C2"
+    },
+    {
+      "type": "module_instance",
+      "line": 283,
+      "instance": "I4",
+      "module": "C2"
+    },
+    {
+      "type": "assert_unlinkable",
+      "line": 287,
+      "filename": "instance.18.wasm",
+      "module_type": "binary",
+      "text": "mismatched resource types"
+    },
+    {
+      "type": "assert_unlinkable",
+      "line": 294,
+      "filename": "instance.19.wasm",
+      "module_type": "binary",
+      "text": "mismatched resource types"
+    },
+    {
+      "type": "assert_unlinkable",
+      "line": 301,
+      "filename": "instance.20.wasm",
+      "module_type": "binary",
+      "text": "mismatched resource types"
+    },
+    {
+      "type": "assert_unlinkable",
+      "line": 308,
+      "filename": "instance.21.wasm",
+      "module_type": "binary",
+      "text": "mismatched resource types"
+    },
+    {
+      "type": "assert_unlinkable",
+      "line": 315,
+      "filename": "instance.22.wasm",
+      "module_type": "binary",
+      "text": "mismatched resource types"
+    },
+    {
+      "type": "assert_unlinkable",
+      "line": 322,
+      "filename": "instance.23.wasm",
+      "module_type": "binary",
+      "text": "mismatched resource types"
+    }
+  ]
+}

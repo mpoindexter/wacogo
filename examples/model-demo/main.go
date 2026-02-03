@@ -9,6 +9,7 @@ import (
 
 	"github.com/partite-ai/wacogo/componentmodel"
 	"github.com/partite-ai/wacogo/componentmodel/host"
+	"github.com/partite-ai/wacogo/internal/wasmtools"
 	"github.com/partite-ai/wacogo/parser"
 	"github.com/partite-ai/wacogo/wasi/p2"
 	"github.com/tetratelabs/wazero"
@@ -35,6 +36,11 @@ func main() {
 	data, err := os.ReadFile(componentPath)
 	if err != nil {
 		log.Fatalf("Failed to read component: %v", err)
+	}
+
+	// Validate the component
+	if err := wasmtools.ValidateWasm(context.Background(), data); err != nil {
+		log.Fatalf("Failed to validate component: %v", err)
 	}
 
 	// Parse the component

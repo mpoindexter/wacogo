@@ -1,0 +1,1 @@
+(component(component $c (core type $t (module (alias outer $c $t (type))))) )

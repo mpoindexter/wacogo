@@ -305,52 +305,28 @@ type IncomingDatagramStream struct {
 type OutgoingDatagramStream struct {
 }
 
-type IncomingDatagram host.Record[IncomingDatagram]
+type IncomingDatagram host.Record[struct {
+	Data          host.RecordField[IncomingDatagram, componentmodel.ByteArray]
+	RemoteAddress host.RecordField[IncomingDatagram, IpSocketAddress] `cm:"remote-address"`
+}]
 
 func NewIncomingDatagram(data []byte, remoteAddress IpSocketAddress) IncomingDatagram {
-	return host.RecordConstruct[IncomingDatagram](
-		host.RecordField("data", componentmodel.ByteArray(data)),
-		host.RecordField("remote-address", remoteAddress),
-	)
+	rec := host.NewRecord[IncomingDatagram]()
+	rec.Fields.Data.Set(rec, componentmodel.ByteArray(data))
+	rec.Fields.RemoteAddress.Set(rec, remoteAddress)
+	return rec.Record()
 }
 
-func (d IncomingDatagram) ValueType(inst *host.Instance) componentmodel.ValueType {
-	return host.RecordType[IncomingDatagram](
-		inst,
-		NewIncomingDatagram,
-	)
-}
-
-func (d IncomingDatagram) Data() []byte {
-	return host.RecordFieldGetIndex[componentmodel.ByteArray](d, 0)
-}
-
-func (d IncomingDatagram) RemoteAddress() IpSocketAddress {
-	return host.RecordFieldGetIndex[IpSocketAddress](d, 1)
-}
-
-type OutgoingDatagram host.Record[OutgoingDatagram]
+type OutgoingDatagram host.Record[struct {
+	Data          host.RecordField[OutgoingDatagram, componentmodel.ByteArray]
+	RemoteAddress host.RecordField[OutgoingDatagram, Option[IpSocketAddress]] `cm:"remote-address"`
+}]
 
 func NewOutgoingDatagram(data []byte, remoteAddress Option[IpSocketAddress]) OutgoingDatagram {
-	return host.RecordConstruct[OutgoingDatagram](
-		host.RecordField("data", componentmodel.ByteArray(data)),
-		host.RecordField("remote-address", remoteAddress),
-	)
-}
-
-func (d OutgoingDatagram) ValueType(inst *host.Instance) componentmodel.ValueType {
-	return host.RecordType[OutgoingDatagram](
-		inst,
-		NewOutgoingDatagram,
-	)
-}
-
-func (d OutgoingDatagram) Data() []byte {
-	return host.RecordFieldGetIndex[componentmodel.ByteArray](d, 0)
-}
-
-func (d OutgoingDatagram) RemoteAddress() Option[IpSocketAddress] {
-	return host.RecordFieldGetIndex[Option[IpSocketAddress]](d, 1)
+	rec := host.NewRecord[OutgoingDatagram]()
+	rec.Fields.Data.Set(rec, componentmodel.ByteArray(data))
+	rec.Fields.RemoteAddress.Set(rec, remoteAddress)
+	return rec.Record()
 }
 
 func CreateUdpInstance(

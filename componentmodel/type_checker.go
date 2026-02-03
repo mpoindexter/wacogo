@@ -2,60 +2,100 @@ package componentmodel
 
 import (
 	"fmt"
+	"iter"
 )
 
-// validateResourceTypeDefinedInComponent checks that a resource type is defined in the current component
-// Resource types can only use resource.new, resource.drop, and resource.rep within the component that defined them
-func validateResourceTypeDefinedInComponent(resourceType *ResourceType, currentInstance *Instance) error {
-	if resourceType.instance != currentInstance {
-		return fmt.Errorf("resource type not defined in current component instance")
-	}
-	return nil
+type typeChecker interface {
+	checkTypeCompatible(Type, Type) error
 }
 
-// validateVariantCasesNonEmpty ensures variant types have at least one case
-// Per the explainer: "variants are required to have a non-empty list of cases"
-func validateVariantCasesNonEmpty(variant *VariantType) error {
-	if len(variant.Cases) == 0 {
-		return fmt.Errorf("variant type must have at least one case")
-	}
-	return nil
+type typeCheckingScope struct {
+	boundIdentities map[*ResourceType]*ResourceType
 }
 
-// validateRecordFieldNames ensures record fields have unique names
-func validateRecordFieldNames(record *RecordType) error {
-	seen := make(map[string]bool)
-	for _, field := range record.Fields {
-		if field.Name != "" {
-			if seen[field.Name] {
-				return fmt.Errorf("duplicate record field name: %s", field.Name)
+func newTypeChecker() *typeCheckingScope {
+	return &typeCheckingScope{
+		boundIdentities: make(map[*ResourceType]*ResourceType),
+	}
+}
+
+func (s *typeCheckingScope) checkTypeCompatible(a Type, b Type) error {
+	// Bind resource type bounds to a particular identity the first time we see them
+	if aRT, ok := a.(*ResourceType); ok {
+		if aRT.instance == resourceTypeBoundMarker {
+			ident, ok := s.boundIdentities[aRT]
+			if !ok {
+				ident = aRT
+				if bRT, ok := b.(*ResourceType); ok {
+					s.boundIdentities[aRT] = bRT
+					ident = bRT
+				}
 			}
-			seen[field.Name] = true
+			a = ident
 		}
+	}
+	if err := a.checkType(b, s); err != nil {
+		return err
 	}
 	return nil
 }
 
-// validateVariantCaseNames ensures variant cases have unique names
-func validateVariantCaseNames(variant *VariantType) error {
-	seen := make(map[string]bool)
-	for _, c := range variant.Cases {
-		if seen[c.Name] {
-			return fmt.Errorf("duplicate variant case name: %s", c.Name)
-		}
-		seen[c.Name] = true
+type comparableType interface {
+	Type
+	comparable
+}
+
+func assertTypeIdentityEqual[T comparableType](a T, b Type) error {
+	typedB, ok := b.(T)
+	if !ok {
+		return fmt.Errorf("type mismatch: expected %s, found %s", a.typeName(), b.typeName())
+	}
+	if a != typedB {
+		return fmt.Errorf("type mismatch: expected %s, found %s", a.typeName(), b.typeName())
 	}
 	return nil
 }
 
-// validateFlagNames ensures flag names are unique
-func validateFlagNames(flags *FlagsType) error {
-	seen := make(map[string]bool)
-	for _, name := range flags.FlagNames {
-		if seen[name] {
-			return fmt.Errorf("duplicate flag name: %s", name)
-		}
-		seen[name] = true
+func assertCompositeTypeElementsEqual[T Type](a T, b Type, elements func(T) iter.Seq2[string, Type], checker typeChecker) (T, error) {
+	typedB, ok := b.(T)
+	if !ok {
+		return zero[T](), fmt.Errorf("type mismatch: expected %s, found %s", a.typeName(), b.typeName())
 	}
-	return nil
+
+	nextA, stopA := iter.Pull2(elements(a))
+	defer stopA()
+
+	nextB, stopB := iter.Pull2(elements(typedB))
+	defer stopB()
+
+	for {
+		kA, vA, okA := nextA()
+		kB, vB, okB := nextB()
+
+		if !okA && !okB {
+			break
+		}
+		if okA && !okB {
+			return zero[T](), fmt.Errorf("type mismatch: missing element named `%s`", kA)
+
+		}
+		if !okA && okB {
+			return zero[T](), fmt.Errorf("type mismatch: extra element named `%s` found", kB)
+		}
+		if kA != kB {
+			return zero[T](), fmt.Errorf("type mismatch: expected element named `%s`, found `%s`", kA, kB)
+		}
+		if err := checker.checkTypeCompatible(vA, vB); err != nil {
+			return zero[T](), fmt.Errorf("type mismatch in element `%s`: %w", kA, err)
+		}
+	}
+	return typedB, nil
+}
+
+func assertTypeKindIsSame[T Type](a T, b Type) (T, error) {
+	typedB, ok := b.(T)
+	if !ok {
+		return zero[T](), fmt.Errorf("type mismatch: expected %s, found %s", a.typeName(), b.typeName())
+	}
+	return typedB, nil
 }

@@ -1,0 +1,1 @@
+(component(type $t (variant (case $x "x" string (refines $x)))) )

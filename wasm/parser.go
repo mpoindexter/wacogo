@@ -5,13 +5,29 @@ import (
 	"fmt"
 )
 
+type Externs struct {
+	Imports *Imports
+	Exports *Exports
+}
+
+type ModuleName struct {
+	Module string
+	Name   string
+}
+
+type Imports struct {
+	Tables   map[ModuleName]*TableType
+	Globals  map[ModuleName]*GlobalType
+	Memories map[ModuleName]*MemoryType
+}
+
 type Exports struct {
 	Tables   map[string]*TableType
 	Globals  map[string]*GlobalType
 	Memories map[string]*MemoryType
 }
 
-func ReadExports(mod []byte) (*Exports, error) {
+func ReadExterns(mod []byte) (*Externs, error) {
 
 	var err error
 	mod, err = readModuleHeader(mod)
@@ -22,6 +38,9 @@ func ReadExports(mod []byte) (*Exports, error) {
 	exportedTables := make(map[string]uint32)
 	exportedGlobals := make(map[string]uint32)
 	exportedMemories := make(map[string]uint32)
+	importedTables := make(map[ModuleName]uint32)
+	importedGlobals := make(map[ModuleName]uint32)
+	importedMemories := make(map[ModuleName]uint32)
 	tableTypes := make(map[uint32]*TableType)
 	memoryTypes := make(map[uint32]*MemoryType)
 	globalTypes := make(map[uint32]*GlobalType)
@@ -66,13 +85,13 @@ func ReadExports(mod []byte) (*Exports, error) {
 			// Process each import
 			for range count {
 				// Read module name
-				_, err := readName(reader)
+				modName, err := readName(reader)
 				if err != nil {
 					return nil, fmt.Errorf("failed to read import module name: %w", err)
 				}
 
 				// Read name
-				_, err = readName(reader)
+				importName, err := readName(reader)
 				if err != nil {
 					return nil, fmt.Errorf("failed to read import name: %w", err)
 				}
@@ -98,6 +117,7 @@ func ReadExports(mod []byte) (*Exports, error) {
 					}
 
 					tableTypes[tableTypeOffset] = tableType
+					importedTables[ModuleName{Module: modName, Name: importName}] = tableTypeOffset
 					tableTypeOffset++
 				case 0x02: // memory
 					// Read memory type
@@ -107,6 +127,7 @@ func ReadExports(mod []byte) (*Exports, error) {
 					}
 
 					memoryTypes[memoryTypeOffset] = memoryType
+					importedMemories[ModuleName{Module: modName, Name: importName}] = memoryTypeOffset
 					memoryTypeOffset++
 				case 0x03: // global
 					// Read global type
@@ -116,8 +137,8 @@ func ReadExports(mod []byte) (*Exports, error) {
 					}
 
 					globalTypes[globalTypeOffset] = globalType
+					importedGlobals[ModuleName{Module: modName, Name: importName}] = globalTypeOffset
 					globalTypeOffset++
-
 				default:
 					return nil, fmt.Errorf("unknown import kind: %d", kind)
 				}
@@ -243,6 +264,36 @@ func ReadExports(mod []byte) (*Exports, error) {
 		}
 	}
 
+	imports := &Imports{
+		Tables:   make(map[ModuleName]*TableType),
+		Globals:  make(map[ModuleName]*GlobalType),
+		Memories: make(map[ModuleName]*MemoryType),
+	}
+
+	for modName, idx := range importedTables {
+		tableType, ok := tableTypes[idx]
+		if !ok {
+			return nil, fmt.Errorf("table type for index %d not found", idx)
+		}
+		imports.Tables[modName] = tableType
+	}
+
+	for modName, idx := range importedMemories {
+		memoryType, ok := memoryTypes[idx]
+		if !ok {
+			return nil, fmt.Errorf("memory type for index %d not found", idx)
+		}
+		imports.Memories[modName] = memoryType
+	}
+
+	for modName, idx := range importedGlobals {
+		globalType, ok := globalTypes[idx]
+		if !ok {
+			return nil, fmt.Errorf("global type for index %d not found", idx)
+		}
+		imports.Globals[modName] = globalType
+	}
+
 	// Build final export map
 	exports := &Exports{
 		Tables:   make(map[string]*TableType),
@@ -274,7 +325,10 @@ func ReadExports(mod []byte) (*Exports, error) {
 		exports.Globals[name] = globalType
 	}
 
-	return exports, nil
+	return &Externs{
+		Imports: imports,
+		Exports: exports,
+	}, nil
 }
 
 func readModuleHeader(moduleBytes []byte) ([]byte, error) {

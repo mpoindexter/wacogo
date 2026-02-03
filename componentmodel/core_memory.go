@@ -1,6 +1,8 @@
 package componentmodel
 
 import (
+	"fmt"
+
 	"github.com/tetratelabs/wazero/api"
 )
 
@@ -18,15 +20,6 @@ func newCoreMemory(module api.Module, name string, memory api.Memory) *coreMemor
 	}
 }
 
-func (m *coreMemory) typ() *coreMemoryType {
-	min := m.memory.Definition().Min()
-	var max *uint32
-	if defMax, ok := m.memory.Definition().Max(); ok {
-		max = &defMax
-	}
-	return newCoreMemoryType(min, max)
-}
-
 type coreMemoryType struct {
 	min uint32
 	max *uint32
@@ -39,18 +32,28 @@ func newCoreMemoryType(min uint32, max *uint32) *coreMemoryType {
 	}
 }
 
-func (t *coreMemoryType) typ() Type {
-	return t
+func (c *coreMemoryType) isType() {}
+
+func (t *coreMemoryType) typeName() string {
+	return "core memory"
 }
 
-func (t *coreMemoryType) assignableFrom(other Type) bool {
-	otherMem, ok := other.(*coreMemoryType)
-	if !ok {
-		return false
+func (t *coreMemoryType) checkType(other Type, typeChecker typeChecker) error {
+	ot, err := assertTypeKindIsSame(t, other)
+	if err != nil {
+		return err
 	}
-	if t.min > otherMem.min {
-		return false
+	if t.min > ot.min {
+		return fmt.Errorf("type mismatch: mismatch in memory limits: memory minimum size %d is greater than %d", t.min, ot.min)
 	}
 	// TODO: should we compare max values?
-	return true
+	return nil
+}
+
+func (t *coreMemoryType) typeSize() int {
+	return 1
+}
+
+func (t *coreMemoryType) typeDepth() int {
+	return 1
 }

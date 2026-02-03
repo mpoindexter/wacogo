@@ -1596,7 +1596,7 @@ func (p *Parser) parseTypeConstructor() (ast.DefType, error) {
 			return nil, err
 		}
 		if repType != 0x7f {
-			return nil, fmt.Errorf("expected i32 rep type 0x7f, got 0x%02x", repType)
+			return nil, fmt.Errorf("resources can only be represented by `i32`, got 0x%02x", repType)
 		}
 		// Parse optional destructor
 		hasDtor, err := p.readByte()
@@ -1663,11 +1663,11 @@ func (p *Parser) parseResultList() (ast.DefValType, error) {
 			return nil, err
 		}
 		if noByte != 0x00 {
-			return nil, fmt.Errorf("expected 0x00 after no-result indicator, got 0x%02x", noByte)
+			return nil, fmt.Errorf("invalid leading byte (0x%x) for number of results", noByte)
 		}
 		return nil, nil
 	default:
-		return nil, fmt.Errorf("invalid result list discriminator: 0x%02x", discriminator)
+		return nil, fmt.Errorf("invalid leading byte (0x%x) for component function results", discriminator)
 	}
 }
 

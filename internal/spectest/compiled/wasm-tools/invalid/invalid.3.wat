@@ -1,0 +1,1 @@
+(component(alias outer $nonexistent $foo (type $foo)) )

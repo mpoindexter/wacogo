@@ -11,25 +11,16 @@ type Instant uint64
 
 type Duration uint64
 
-type DateTime host.Record[DateTime]
+type DateTime host.Record[struct {
+	Seconds     host.RecordField[DateTime, uint64]
+	Nanoseconds host.RecordField[DateTime, uint32]
+}]
 
 func NewDateTime(seconds uint64, nanoseconds uint32) DateTime {
-	return host.RecordConstruct[DateTime](
-		host.RecordField("seconds", seconds),
-		host.RecordField("nanoseconds", nanoseconds),
-	)
-}
-
-func (DateTime) ValueType(inst *host.Instance) componentmodel.ValueType {
-	return host.RecordType[DateTime](inst, NewDateTime)
-}
-
-func (dt DateTime) Seconds() uint64 {
-	return host.RecordFieldGetIndex[uint64](dt, 0)
-}
-
-func (dt DateTime) Nanoseconds() uint32 {
-	return host.RecordFieldGetIndex[uint32](dt, 1)
+	rec := host.NewRecord[DateTime]()
+	rec.Fields.Seconds.Set(rec, seconds)
+	rec.Fields.Nanoseconds.Set(rec, nanoseconds)
+	return rec.Record()
 }
 
 func CreateMonotonicClockInstance(

@@ -1,0 +1,1 @@
+(component(type $t (func)) (type (instance (export "a" (core module (type $t))))) )

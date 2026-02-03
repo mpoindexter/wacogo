@@ -1,6 +1,8 @@
 package componentmodel
 
 import (
+	"fmt"
+
 	"github.com/partite-ai/wacogo/wasm"
 	"github.com/tetratelabs/wazero/api"
 )
@@ -19,16 +21,6 @@ func newCoreTable(module api.Module, name string, def *wasm.TableType) *coreTabl
 	}
 }
 
-func (t *coreTable) typ() *coreTableType {
-	et, _ := coreTypeWasmConstTypeFromWasmParser(t.def.ElemType)
-	min := t.def.Limits.Min
-	var max *uint32
-	if t.def.Limits.HasMax {
-		max = &t.def.Limits.Max
-	}
-	return newCoreTableType(et, min, max)
-}
-
 type coreTableType struct {
 	elementType Type
 	min         uint32
@@ -43,26 +35,70 @@ func newCoreTableType(elementType Type, min uint32, max *uint32) *coreTableType 
 	}
 }
 
-func (t *coreTableType) typ() Type {
-	return t
+func (c *coreTableType) isType() {}
+
+func (t *coreTableType) typeName() string {
+	return "core table"
 }
 
-func (t *coreTableType) assignableFrom(other Type) bool {
-	otherTable, ok := other.(*coreTableType)
-	if !ok {
-		return false
+func (t *coreTableType) checkType(other Type, typeChecker typeChecker) error {
+	ot, err := assertTypeKindIsSame(t, other)
+	if err != nil {
+		return err
 	}
-	if !t.elementType.assignableFrom(otherTable.elementType) {
-		return false
+	if err := typeChecker.checkTypeCompatible(t.elementType, ot.elementType); err != nil {
+		return fmt.Errorf("expected table element type %s, found %s", t.elementType.typeName(), ot.elementType.typeName())
 	}
-	if t.min != otherTable.min {
-		return false
+	if t.min > ot.min {
+		return fmt.Errorf("type mismatch: mismatch in table limits: table minimum size %d greater than %d", t.min, ot.min)
 	}
-	if (t.max == nil) != (otherTable.max == nil) {
-		return false
+
+	if t.max != nil {
+		if ot.max == nil {
+			return fmt.Errorf("type mismatch: mismatch in table limits: expected maximum size %d, found unbounded", *t.max)
+		}
+		if *t.max < *ot.max {
+			return fmt.Errorf("type mismatch: mismatch in table limits: table maximum size %d less than %d", *t.max, *ot.max)
+		}
 	}
-	if t.max != nil && otherTable.max != nil && *t.max != *otherTable.max {
-		return false
+	return nil
+}
+
+func (t *coreTableType) typeSize() int {
+	return 1 + t.elementType.typeSize()
+}
+
+func (t *coreTableType) typeDepth() int {
+	return 1 + t.elementType.typeDepth()
+}
+
+type coreTableTypeResolver struct {
+	elementTypeResolver typeResolver
+	min                 uint32
+	max                 *uint32
+}
+
+func newCoreTableTypeResolver(elementTypeResolver typeResolver, min uint32, max *uint32) *coreTableTypeResolver {
+	return &coreTableTypeResolver{
+		elementTypeResolver: elementTypeResolver,
+		min:                 min,
+		max:                 max,
 	}
-	return true
+}
+
+func (d *coreTableTypeResolver) resolveType(scope *scope) (Type, error) {
+	elementType, err := d.elementTypeResolver.resolveType(scope)
+	if err != nil {
+		return nil, err
+	}
+	return newCoreTableType(elementType, d.min, d.max), nil
+}
+
+func (d *coreTableTypeResolver) typeInfo(scope *scope) *typeInfo {
+	ti := d.elementTypeResolver.typeInfo(scope)
+	return &typeInfo{
+		typeName: "core table",
+		depth:    1 + ti.depth,
+		size:     1 + ti.size,
+	}
 }
